@@ -99,7 +99,9 @@ the picture you were being asked about.
 ## Where the Masks Are Stored
 
 Masks are card data, so they live where that card's data already lives — no
-sidecar files, no separate database.
+separate database. The places below are a note's own; a note in
+[sidecar mode](../reference/data-storage.md#sidecar-files) keeps a fence's
+shape sets in its sidecar instead, under the same keys.
 
 ### In a fence
 

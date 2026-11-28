@@ -242,3 +242,9 @@ export class TFile {
 export function parseYaml(text: string): unknown {
 	return JSON.parse(text) as unknown;
 }
+
+/** Enough of Obsidian's `normalizePath` for test paths: collapse slashes, trim them from the ends. */
+export function normalizePath(path: string): string {
+	const collapsed = path.replace(/[\\/]+/g, "/").replace(/^\/|\/$/g, "");
+	return collapsed === "" ? "/" : collapsed;
+}

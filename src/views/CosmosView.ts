@@ -40,7 +40,9 @@ import { readMapState, writeMapState } from "../mindmap-state";
 import { readingToggle } from "../view-header";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
 import { COSMOS_HIDDEN_BUTTONS, ToolRibbon, barToggles, syncNavbar, type BarToggle, type ButtonDef, type NavbarHost, type ToolbarActions, type ToolbarState } from "./ToolRibbon";
-import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, visibleModel, type ColorContext, type CosmosOverlays } from "../cosmos/overlays";
+import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, soleNotePath, visibleModel, type ColorContext, type CosmosOverlays } from "../cosmos/overlays";
+import { mapBackground, type ThemeLookup } from "../cosmos/node-style";
+import { getTheme, isDefaultTheme } from "../themes";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import type OsmosisPlugin from "../main";
 import type { CosmosScene, SceneControls, SceneOverlays, SceneTheme } from "./CosmosScene";
@@ -134,6 +136,10 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 	private colorBy: CosmosOverlays["colorBy"] | null = null;
 	/** Which of the toggles that add or remove plates (see `modelKey`) the model shown now was built under, to reload when the menu changes one. */
 	private modelShown: string | null = null;
+	/** Whether the model shown now was built with the notes' mind map themes (the *Mind map style* colour mode), to reload when the menu turns it on or off. */
+	private modelThemed: boolean | null = null;
+	/** The single note's map background the scene shows instead of Obsidian's (*Mind map style* only, `mapBackground`); null for Obsidian's. */
+	private sceneBackground: string | null = null;
 	/** The model changed because of an Overlays toggle: once it is in the scene, the loaded nodes re-settle, plates that just arrived included (`CosmosScene.reshape`). */
 	private resettleOnLoad = false;
 	/** The model as built from the notes, before the Overlays leave plates out: tag colours read the tag hubs from it, which Tags off removes. */
@@ -514,6 +520,13 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.registerEvent(this.app.workspace.on("css-change", () => this.scene?.setTheme(this.readTheme())));
 		// The metadata cache has caught up with a style write: read it from there again.
 		this.registerEvent(this.app.metadataCache.on("changed", (file) => this.styleFrontmatter.delete(file.path)));
+		// A note's sidecar changed (sidecar mode: its styles live there). The
+		// note's own `changed`/`resolve` never fire for it, so drop the cached
+		// styles and redraw here instead, as `resolve` does for a note edit.
+		this.register(this.plugin().noteData.onChange((notePath) => {
+			this.styleFrontmatter.delete(notePath);
+			if (this.horizon?.hops.has(notePath) === true) this.scheduleReload();
+		}));
 		this.registerEvent(
 			this.app.workspace.on("file-open", (file) => {
 				if (!this.follow || file?.extension !== "md" || file.path === this.focusPath) return;
@@ -578,6 +591,8 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.styleFrontmatter.clear();
 		this.colorBy = null;
 		this.modelShown = null;
+		this.modelThemed = null;
+		this.sceneBackground = null;
 		this.resettleOnLoad = false;
 		this.fullModel = null;
 		this.stageEl = null;
@@ -601,12 +616,18 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		if (this.modelShown !== null && modelKey(overlays.edges) !== this.modelShown) {
 			this.resettleOnLoad = true;
 			void this.reload();
+		} else if (this.modelThemed !== null && (overlays.colorBy === "style") !== this.modelThemed) {
+			// Mind map style on or off: the notes' themes are part of each node's style, which the model carries. Nothing moves.
+			void this.reload();
 		}
 	}
 
 	private plugin(): OsmosisPlugin {
 		return this.app.plugins.plugins["osmosis"] as OsmosisPlugin;
 	}
+
+	/** Review log shards and sidecars: Markdown, but never notes in the graph. */
+	private readonly isDataPath = (path: string): boolean => this.plugin().isOsmosisDataPath(path);
 
 	private controlSettings(): SceneControls {
 		const { settings } = this.plugin();
@@ -1953,17 +1974,20 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.lastEditPath = file.path;
 		this.loadSeq++;
 		this.edits.recorder.beginGroup();
-		let after: string;
+		let growth: number;
 		try {
 			if (plan.content !== content) await this.edits.write(file, plan.content);
-			after = await this.edits.processFrontMatter(file, (fm) => writeWidthStyle(fm, selector, buildStableIdSelector(line), width));
+			const target = await this.plugin().noteData.targetFor(file);
+			const written = await this.edits.processFrontMatter(target, (fm) => writeWidthStyle(fm, selector, buildStableIdSelector(line), width));
+			// A sidecar write leaves the note's body where it was.
+			growth = target === file ? written.length - plan.content.length : 0;
 		} finally {
 			this.edits.recorder.endGroup();
 		}
 		this.cache.invalidate(file.path);
 		this.prefetched.delete(file.path);
 		// The stamp lands at the end of the line; the frontmatter write above the body shifts every offset by its growth.
-		this.edited = [{ path: file.path, start: line.range.start + (after.length - plan.content.length), from: node.id }];
+		this.edited = [{ path: file.path, start: line.range.start + growth, from: node.id }];
 		this.editLanded = true;
 		void this.reload();
 	}
@@ -2038,16 +2062,38 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		const source = node?.source;
 		if (node?.path === undefined || source === undefined) return null;
 		const file = this.app.vault.getFileByPath(node.path);
-		const raw = this.styleFrontmatter.get(node.path) ?? (file === null ? undefined : this.app.metadataCache.getFileCache(file)?.frontmatter);
+		const raw = this.styleFrontmatter.get(node.path) ?? (file === null ? undefined : this.plugin().noteData.frontmatter(file));
 		const fm = parseOsmosisStyleFrontmatter(raw);
 		// Tree-path selectors (a legacy fallback) need the whole parse; the block-ID and stable-ID ones cover what either view writes now.
 		const local = lookupNodeStyleByPath(fm, source.id, undefined, source.blockId);
 		return { fm, local, depth: source.type === "heading" ? source.depth : undefined };
 	}
 
-	/** The Cosmos draws without the plugin's theme (unstyled plates look as they always have), so the Node tab shows no theme defaults. */
+	/**
+	 * The Node tab's theme defaults: in *Mind map style* mode, the mind map
+	 * theme of the primary selected line's note; in any other colour mode none,
+	 * as Cosmos then draws without the themes.
+	 */
 	getActiveTheme(): ThemeDefinition | undefined {
-		return undefined;
+		if (this.plugin().settings.graph3dOverlays.colorBy !== "style") return undefined;
+		const path = this.styledSelection()[0]?.path;
+		const file = path === undefined ? null : this.app.vault.getFileByPath(path);
+		if (path === undefined || file === null) return undefined;
+		const name = parseOsmosisStyleFrontmatter(this.styleFrontmatter.get(path) ?? this.plugin().noteData.frontmatter(file))?.theme;
+		return name === undefined || isDefaultTheme(name) ? undefined : this.themeLookup()(name);
+	}
+
+	/** Finds a mind map theme by name, the presets' or the user's own. */
+	private themeLookup(): ThemeLookup {
+		const { customThemes } = this.plugin().settings;
+		return (name) => getTheme(name, customThemes);
+	}
+
+	/** Show `color` behind the scene instead of Obsidian's background (null: Obsidian's again). The fog and the plates' fade follow it. */
+	private setSceneBackground(color: string | null): void {
+		if (color === this.sceneBackground) return;
+		this.sceneBackground = color;
+		this.scene?.setTheme(this.readTheme());
 	}
 
 	getGlobalClasses(): Record<string, NodeStyle> {
@@ -2166,7 +2212,8 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 					stamped = true;
 				}
 				const body = plan?.content ?? content;
-				const after = await this.edits.processFrontMatter(file, (fm) => {
+				const target = await this.plugin().noteData.targetFor(file);
+				const after = await this.edits.processFrontMatter(target, (fm) => {
 					for (const [node, line] of lines) {
 						const selector = plan?.selectors.get(line.id) ?? buildBlockIdSelector(line) ?? buildStableIdSelector(line);
 						if (selector.startsWith("^") && line.blockId === undefined) this.styleStamps.set(`${path}\n${line.id}`, selector.slice(1));
@@ -2176,10 +2223,11 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 				});
 				this.cache.invalidate(path);
 				this.prefetched.delete(path);
-				// Stamps land at line ends; the frontmatter write above the body shifts every offset by its growth.
+				// Stamps land at line ends; the frontmatter write above the body shifts every offset by its growth (none for a sidecar's).
+				const growth = target === file ? after.length - body.length : 0;
 				for (const [node, line] of lines) {
 					const start = plan === null ? line.range.start : stampedStart(plan, line.range.start);
-					edited.push({ path, start: start + (after.length - body.length), from: node.id });
+					edited.push({ path, start: start + growth, from: node.id });
 				}
 			}
 		} finally {
@@ -2289,7 +2337,7 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 	private routeNotes(): string[] {
 		const loaded = new Set(this.horizon?.loaded ?? []);
 		if (this.depth === 0 && this.focusPath !== null) {
-			this.adjacency ??= noteAdjacency(this.app.metadataCache.resolvedLinks);
+			this.adjacency ??= noteAdjacency(this.app.metadataCache.resolvedLinks, this.isDataPath);
 			for (const path of computeHorizon(this.adjacency, this.focusPath, 1, this.backlinks).loaded) loaded.add(path);
 		}
 		return [...loaded];
@@ -2297,7 +2345,7 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	/** Hop distance from `path` to every note it reaches. Links count in both directions: a route is flown, not followed. */
 	private hopsFrom(path: string): ReadonlyMap<string, number> {
-		this.adjacency ??= noteAdjacency(this.app.metadataCache.resolvedLinks);
+		this.adjacency ??= noteAdjacency(this.app.metadataCache.resolvedLinks, this.isDataPath);
 		return computeHorizon(this.adjacency, path, Number.MAX_SAFE_INTEGER - 1, true).hops;
 	}
 
@@ -2550,12 +2598,13 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.model = null;
 			this.fullModel = null;
 			this.syncHolds(new Set());
+			this.setSceneBackground(null);
 			scene.setData({ nodes: [], edges: [] }, new Map());
 			return;
 		}
 
 		const { metadataCache, vault } = this.app;
-		this.adjacency ??= noteAdjacency(metadataCache.resolvedLinks);
+		this.adjacency ??= noteAdjacency(metadataCache.resolvedLinks, this.isDataPath);
 		const resolve: LinkResolver = (linkpath, sourcePath) => metadataCache.getFirstLinkpathDest(decodeEmbedTarget(linkpath), sourcePath)?.path ?? null;
 		const readNote = async (path: string): Promise<NoteInput | null> => {
 			const file = vault.getFileByPath(path);
@@ -2563,7 +2612,11 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 			try {
 				const prefetched = this.prefetched.get(path);
 				const markdown = prefetched?.mtime === file.stat.mtime ? prefetched.text : await vault.cachedRead(file);
-				return { tree: this.cache.get(path, markdown), cache: metadataCache.getFileCache(file) };
+				const own = metadataCache.getFileCache(file);
+				// Sidecar mode: the note's styles (what the model reads from its frontmatter) are in the sidecar.
+				const { noteData } = this.plugin();
+				const cache = own !== null && noteData.sidecarOf(file) !== null ? { ...own, frontmatter: noteData.frontmatter(file) } : own;
+				return { tree: this.cache.get(path, markdown), cache };
 			} catch (error) {
 				console.error(`Osmosis: Cosmos could not read ${path}`, error);
 				return null;
@@ -2592,14 +2645,16 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		// A newer reload (another hop, an edit) started while these were read.
 		if (seq !== this.loadSeq) return;
 
-		const { edges } = this.plugin().settings.graph3dOverlays;
+		const { edges, colorBy } = this.plugin().settings.graph3dOverlays;
 		this.modelShown = modelKey(edges);
-		const fullModel = buildGraph(
-			notes.filter((note): note is NoteInput => note !== null),
-			resolve,
-			{ contentOnly: this.depth === 0, globalClasses: this.plugin().settings.globalClasses },
-		);
+		const themes = colorBy === "style" ? this.themeLookup() : undefined;
+		this.modelThemed = themes !== undefined;
+		const read = notes.filter((note): note is NoteInput => note !== null);
+		const fullModel = buildGraph(read, resolve, { contentOnly: this.depth === 0, globalClasses: this.plugin().settings.globalClasses, themes });
 		const model = visibleModel(fullModel, edges);
+		// A scene of one note takes that note's map background, as its mind map does.
+		const sole = themes === undefined ? null : soleNotePath(model.nodes);
+		this.setSceneBackground(themes === undefined || sole === null ? null : mapBackground(read.find((note) => note.tree.filePath === sole)?.cache?.frontmatter, themes));
 		// An edit that added, deleted, moved or re-levelled a line makes room for its new shape; rewording one does not.
 		const reshaped = this.editLanded && this.model !== null && outlineChanged(this.model, model);
 		this.editLanded = false;
@@ -2684,12 +2739,13 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 	/**
 	 * Theme colours as the engine needs them: resolved `rgb()` strings. Reading
 	 * the variables directly can yield any CSS colour syntax a theme likes, so a
-	 * probe element lets the browser resolve them.
+	 * probe element lets the browser resolve them. The background is a single
+	 * note's map background instead, when it has one (`setSceneBackground`).
 	 */
 	private readTheme(): SceneTheme {
 		const probe = this.contentEl.createDiv({ cls: "osmosis-cosmos-probe" });
 		const style = getComputedStyle(probe);
-		const theme = { background: style.backgroundColor, text: style.color, plate: style.borderTopColor, font: style.fontFamily, accent: style.borderBottomColor, found: style.borderLeftColor };
+		const theme = { background: this.sceneBackground ?? style.backgroundColor, text: style.color, plate: style.borderTopColor, font: style.fontFamily, accent: style.borderBottomColor, found: style.borderLeftColor };
 		probe.remove();
 		return theme;
 	}

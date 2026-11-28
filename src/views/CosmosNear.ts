@@ -32,6 +32,16 @@
  *   (`../cosmos/raster.ts`). Moving the camera then moves and scales layers
  *   without repainting their text; the veil fades on its own layer, and a
  *   mask is a mask layer of its own. Only leaving the raster band repaints.
+ * - **Shapes (T130):** a panel in any shape but a solid rectangle draws its
+ *   outline (and, for a shape, its fill) as an SVG path under its text, the
+ *   mind map's geometry (`shapePath`), and a shape clips the panel to the path,
+ *   so the veil and text follow it too. An SVG stroke follows any path and
+ *   takes the mind map's `stroke-dasharray`, which neither a CSS border nor
+ *   the inset shadow can; it is drawn twice as wide and clipped to its inner
+ *   half, as the inset shadow sits inside the box. A shape's box is fitted
+ *   round its measured text (`fitShape`): the mind map's box round the same
+ *   content, padded so the text sits in the shape's inner box, and grown so
+ *   its outline holds the plate under it (T130 fix 1).
  * - **Lifecycle:** each panel renders into its own `Component`, unloaded when
  *   the panel goes. Video and audio pause the moment their node leaves the
  *   tier, and release their media when the panel is removed.
@@ -47,10 +57,11 @@ import { CSS3DObject, CSS3DRenderer } from "three/examples/jsm/renderers/CSS3DRe
 import type { GraphNode } from "../cosmos/model";
 import { NEAR_ENTER_SCREEN, NEAR_EXIT_RATIO, chooseNear, enterScaleFromDetail, panelHalfNdc, panelScale, type NearProbe, type NearTierSettings } from "../cosmos/lod";
 import { editorAnchor, type EditorPlace } from "../cosmos/edit";
-import { MIN_STYLE_WIDTH_PX, nearMarkdown, panelBoxEm, panelWidthRule, styleWidthEm } from "../cosmos/near";
+import { MIN_STYLE_WIDTH_PX, PANEL_MAX_EM, PANEL_PAD_EM, nearMarkdown, panelBoxEm, panelWidthRule, styleWidthEm } from "../cosmos/near";
+import { DASH_EM, fitShapedPanel, isBareShape, isRectShape, shapePath, shapeWrapEm } from "../cosmos/plate-shapes";
 import { plateVisibility } from "../cosmos/focus";
 import { PLATE_HEIGHT_EM, PLATE_RADIUS, PLATE_STROKE_EM } from "../cosmos/plates";
-import type { NodeLook } from "../cosmos/node-style";
+import { DEFAULT_FONT, textScale, type NodeLook } from "../cosmos/node-style";
 import { holeMask, panelHoles, type PanelHole, type ScreenPlate } from "../cosmos/occlusion";
 import { frontPanelAt, rectContains, type DrawnPanel, type ScreenRect } from "../cosmos/links";
 import type { TangentFrame } from "../cosmos/planets";
@@ -117,6 +128,9 @@ interface DrawnPlate extends ScreenPlate {
 
 /** Panel text size, in CSS px, before the per-frame scale. */
 export const NEAR_FONT_PX = 16;
+
+/** A node's panel text size, in CSS px before the per-frame scale: `NEAR_FONT_PX` times its style's `textScale`. */
+const fontPx = (node: NearSource): number => NEAR_FONT_PX * (node.look?.font.scale ?? textScale(node.graph.style));
 /** Seconds for a panel to cross-fade in over its plate, or out. */
 const NEAR_FADE_S = 0.25;
 /** Rendered panels kept to clone on re-entry, like the mind map's HTML cache. */
@@ -144,12 +158,19 @@ interface Panel {
 	/** The box's laid-out size in px, before its scale (`ResizeObserver`). */
 	width: number;
 	height: number;
+	/** The body's (the rendered text's) laid-out size in px, which a shaped panel's box is fitted round (`fitShape`). */
+	textWidth: number;
+	textHeight: number;
 	/** The mask last written, to skip unchanged writes. */
 	mask: string;
 	/** Px the box is drawn per px laid out inside the lens (`rasterScale`); 0 before the first placement. A tilted panel's is 1. */
 	raster: number;
 	/** The plate's corner radius, in px before any scale. */
 	radius: number;
+	/** The shape's outline (`shapePath`), for any panel but a solid rectangle; null for one. */
+	outline: SVGPathElement | null;
+	/** The path last written to `outline`, to skip unchanged writes. */
+	outlinePath: string;
 	/** The cross-fade opacity, lens transform and veil opacity last written, to skip unchanged writes. */
 	shownFade: number;
 	lensTransform: string;
@@ -229,6 +250,13 @@ export class CosmosNear {
 			const panel = this.boxes.get(entry.target);
 			const size = entry.borderBoxSize[0];
 			if (panel === undefined || size === undefined) continue;
+			if (entry.target === panel.body) {
+				panel.textWidth = size.inlineSize;
+				panel.textHeight = size.blockSize;
+				// The box follows; its own entry then writes the outline.
+				this.fitShape(panel);
+				continue;
+			}
 			panel.width = size.inlineSize;
 			panel.height = size.blockSize;
 			// In the same frame, before paint: the lens is never a frame behind its box.
@@ -369,7 +397,8 @@ export class CosmosNear {
 	private panelPx(node: NearSource, panel: Panel | undefined): { width: number; height: number } | null {
 		if (panel !== undefined && panel.width > 0 && panel.height > 0) return { width: panel.width, height: panel.height };
 		const em = panelBoxEm(node.graph);
-		return em === null ? null : { width: em.width * NEAR_FONT_PX, height: em.height * NEAR_FONT_PX };
+		const px = fontPx(node);
+		return em === null ? null : { width: em.width * px, height: em.height * px };
 	}
 
 	/**
@@ -435,7 +464,8 @@ export class CosmosNear {
 		const plateHeight = node.shape.height * this.pxPerUnit;
 		// A node with a set width wraps its text at it (a code block at its fit), as its panel does.
 		const rule = panelWidthRule(node.graph);
-		editor.setPlate({ minWidth: node.shape.width * this.pxPerUnit, ...(rule.kind === "default" ? {} : { maxWidth: Math.max(rule.em * NEAR_FONT_PX, node.shape.width * this.pxPerUnit) }), minHeight: plateHeight, radius: plateHeight * cornerOf(node), fontSize: NEAR_FONT_PX });
+		const px = fontPx(node);
+		editor.setPlate({ minWidth: node.shape.width * this.pxPerUnit, ...(rule.kind === "default" ? {} : { maxWidth: Math.max(rule.em * px, node.shape.width * this.pxPerUnit) }), minHeight: plateHeight, radius: plateHeight * cornerOf(node), fontSize: px });
 	}
 
 	/** Give the panels of the nodes in `ids` the selection border, and take it from the rest. */
@@ -486,7 +516,8 @@ export class CosmosNear {
 	setPreviewWidth(id: string, width: number | null): number | null {
 		const panel = this.panels.get(id);
 		if (panel === undefined) return width;
-		panel.preview = width === null ? null : Math.max(width, styleWidthEm(MIN_STYLE_WIDTH_PX) * NEAR_FONT_PX);
+		const scale = textScale(panel.node.graph.style);
+		panel.preview = width === null ? null : Math.max(width, styleWidthEm(MIN_STYLE_WIDTH_PX, scale) * NEAR_FONT_PX * scale);
 		this.paint(panel);
 		return panel.preview;
 	}
@@ -561,24 +592,96 @@ export class CosmosNear {
 	 */
 	private paint(panel: Panel): void {
 		const { look, color } = panel.node;
-		const stroke = (look?.stroke ?? 1) * PLATE_STROKE_EM;
+		// In ems of the unscaled text, as the plate's: the mind map's border is in px, whatever the text size.
+		const stroke = ((look?.stroke ?? 1) * PLATE_STROKE_EM) / (look?.font.scale ?? 1);
+		const topicShape = look?.shape ?? "rounded-rect";
+		const dash = look?.dash ?? "solid";
+		const bare = isBareShape(topicShape);
+		// A shape (not a rectangle, underline or none) is drawn and clipped by its path, and its box is fitted round its text (`fitShape`).
+		const shaped = !isRectShape(topicShape) && !bare;
 		// A custom width is the panel's exact width; a code block fitting its lines caps it there; every other node keeps the stylesheet's 20em.
 		const rule = panelWidthRule(panel.node.graph);
 		const width: Record<string, string> =
 			panel.preview !== null
 				? { width: `${panel.preview}px`, minWidth: `${panel.preview}px`, maxWidth: `${panel.preview}px` }
-				: { width: rule.kind === "custom" ? `${rule.em}em` : "", minWidth: `${panel.node.shape.width * this.pxPerUnit}px`, maxWidth: rule.kind === "default" ? "" : `${rule.em}em` };
-		panel.radius = panel.node.shape.height * this.pxPerUnit * cornerOf(panel.node);
+				: {
+					width: rule.kind === "custom" ? `${rule.em}em` : "",
+					minWidth: `${panel.node.shape.width * this.pxPerUnit}px`,
+					maxWidth: rule.kind === "default" && rule.em === PANEL_MAX_EM.width ? "" : `${rule.em}em`,
+				};
+		panel.radius = bare ? 0 : panel.node.shape.height * this.pxPerUnit * cornerOf(panel.node);
+		const font = look?.font ?? DEFAULT_FONT;
 		panel.box.setCssStyles({
-			...width,
+			// Every em of the panel (its padding, widths and outline) is one of the node's text, so a bigger text is a bigger panel, as its plate is.
+			fontSize: `${fontPx(panel.node)}px`,
+			// A shape's width, height and padding are `fitShape`'s.
+			...(shaped ? { minWidth: "", maxWidth: "none" } : { ...width, height: "", padding: "" }),
+			minHeight: "",
 			borderRadius: `${panel.radius}px`,
 			boxShadow: stroke === 0 ? "none" : `inset 0 0 0 ${stroke}em ${look?.border ?? color.getStyle()}`,
+			clipPath: "",
 		});
-		// The fill is under the box, in the lens's own space (see `createPanel`).
-		panel.fill.setCssStyles({ backgroundColor: look?.fill ?? "" });
+		// A shape's text wraps where the mind map's does in the shape, narrower than the cap by the shape's insets
+		// (`shapeWrapEm`); a custom width is the text's own, as the mind map stores it.
+		const capEm = panel.preview !== null ? panel.preview / fontPx(panel.node) : rule.em;
+		const textWidth: Record<string, string> = !shaped
+			? { width: "", maxWidth: "" }
+			: rule.kind === "custom" && panel.preview === null
+				? { width: `${rule.em - 2 * PANEL_PAD_EM.x}em`, maxWidth: "" }
+				: { width: "max-content", maxWidth: `${shapeWrapEm(topicShape, capEm, PANEL_PAD_EM.x)}em` };
+		// The fill is under the box, in the lens's own space (see `createPanel`). A shape's is its path's;
+		// underline and none have none of their own (the background), unless a none node's style fills it.
+		const styleFill = look?.fill ?? null;
+		const fill = bare ? (topicShape === "none" && styleFill !== null ? styleFill : "var(--background-primary)") : styleFill ?? "";
+		panel.fill.setCssStyles({ backgroundColor: fill });
+		panel.lens.classList.toggle("is-shaped", shaped);
+		this.fitShape(panel);
+		this.outline(panel, !isRectShape(topicShape) || dash !== "solid", {
+			"--osmosis-near-fill": shaped ? styleFill ?? "var(--background-secondary)" : "none",
+			"--osmosis-near-stroke": stroke === 0 ? "none" : look?.border ?? color.getStyle(),
+			"--osmosis-near-stroke-width": `${2 * stroke}em`,
+			"--osmosis-near-dash": dash === "solid" ? "none" : DASH_EM[dash].map((em) => `${em / (look?.font.scale ?? 1)}em`).join(" "),
+		});
 		this.sizeLens(panel);
-		// On the rendered Markdown itself, as the mind map sets it.
-		panel.body.setCssStyles({ color: look?.text ?? "" });
+		// On the rendered Markdown itself, as the mind map sets it. A family that isn't installed falls back to the theme's.
+		panel.body.setCssStyles({
+			...textWidth,
+			color: look?.text ?? "",
+			fontFamily: font.family === null ? "" : `"${font.family}", var(--font-text)`,
+			fontWeight: font.weight === null ? "" : String(font.weight),
+			fontStyle: font.italic ? "italic" : "",
+			textAlign: font.align ?? "",
+		});
+	}
+
+	/**
+	 * Fit a shaped panel's box round its text as last measured: the mind map's
+	 * box round its content, holding the plate under it (`fitShapedPanel`), its
+	 * text padded into the shape's inner box. The text's width never depends on
+	 * the box's (`paint` gives it its own), so this settles in one pass.
+	 */
+	private fitShape(panel: Panel): void {
+		if (!panel.lens.classList.contains("is-shaped") || panel.textWidth <= 0) return;
+		const px = fontPx(panel.node);
+		const fit = fitShapedPanel(
+			panel.node.look?.shape ?? "rounded-rect",
+			{ width: panel.textWidth + 2 * PANEL_PAD_EM.x * px, height: panel.textHeight + 2 * PANEL_PAD_EM.y * px },
+			{ width: panel.node.shape.width * this.pxPerUnit, height: panel.node.shape.height * this.pxPerUnit },
+		);
+		panel.box.setCssStyles({ width: `${fit.width}px`, height: `${fit.height}px`, padding: fit.padding.map((value) => `${value}px`).join(" ") });
+	}
+
+	/** Give the panel its SVG outline (`drawn`), styled by `props`, or take it away; `sizeLens` writes its path. */
+	private outline(panel: Panel, drawn: boolean, props: Record<string, string>): void {
+		panel.box.classList.toggle("is-outlined", drawn);
+		panel.outlinePath = "";
+		if (!drawn) {
+			panel.outline?.ownerSVGElement?.remove();
+			panel.outline = null;
+			return;
+		}
+		panel.outline ??= panel.box.createSvg("svg", { cls: "osmosis-cosmos-near-shape" }).createSvg("path");
+		panel.outline.setCssProps(props);
 	}
 
 	/** The view went into the background: nothing keeps playing there. */
@@ -627,11 +730,13 @@ export class CosmosNear {
 			anchor.setCssStyles({ pointerEvents: "none" });
 		}
 		const handle = box.createDiv({ cls: "osmosis-cosmos-near-handle" });
-		const panel: Panel = { object, tilted: this.tilted, lens, fill, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "", raster: this.tilted ? 1 : 0, radius: 0, shownFade: 0, lensTransform: "", veilOpacity: "", diagram: "", depth: Infinity, occluders: [], handle, preview: null };
+		const panel: Panel = { object, tilted: this.tilted, lens, fill, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, textWidth: 0, textHeight: 0, mask: "", raster: this.tilted ? 1 : 0, radius: 0, outline: null, outlinePath: "", shownFade: 0, lensTransform: "", veilOpacity: "", diagram: "", depth: Infinity, occluders: [], handle, preview: null };
 		this.boxes.set(box, panel);
+		this.boxes.set(body, panel);
 		lens.classList.toggle("is-editing", node.id === this.editing);
 		this.markResizable(panel);
 		this.sizes.observe(box);
+		this.sizes.observe(body);
 		object.onBeforeRender = (_renderer, _scene, camera) => this.place(panel, camera);
 		object.position.set(node.x ?? 0, node.y ?? 0, node.z ?? 0);
 		this.group.add(object);
@@ -707,6 +812,15 @@ export class CosmosNear {
 			height: panel.height > 0 ? `${panel.height * raster}px` : "",
 		});
 		panel.fill.setCssStyles({ borderRadius: `${panel.radius * raster}px` });
+		const outline = panel.outline;
+		if (outline === null || panel.width <= 0 || panel.height <= 0) return;
+		const topicShape = panel.node.look?.shape ?? "rounded-rect";
+		const path = shapePath(topicShape, panel.width, panel.height, panel.radius);
+		if (path === panel.outlinePath) return;
+		panel.outlinePath = path;
+		outline.setAttribute("d", path);
+		// A shape clips its panel (text, veil and all) to its outline; a rectangle's corners already do.
+		if (panel.lens.classList.contains("is-shaped")) panel.box.setCssStyles({ clipPath: `path("${path}")` });
 	}
 
 	private setLensTransform(panel: Panel, transform: string): void {
@@ -858,7 +972,7 @@ export class CosmosNear {
 		// Never smaller than the plate under it, with the same corners, outline and colours.
 		const { shape } = panel.node;
 		panel.box.setCssStyles({
-			fontSize: `${NEAR_FONT_PX}px`,
+			fontSize: `${fontPx(panel.node)}px`,
 			minWidth: `${shape.width * this.pxPerUnit}px`,
 			minHeight: `${shape.height * this.pxPerUnit}px`,
 		});
@@ -926,7 +1040,9 @@ export class CosmosNear {
 		releaseMedia(panel.body);
 		panel.component.unload();
 		this.sizes.unobserve(panel.box);
+		this.sizes.unobserve(panel.body);
 		this.boxes.delete(panel.box);
+		this.boxes.delete(panel.body);
 		// CSS2DObject removes its element from the page when it leaves the scene.
 		this.group.remove(panel.object);
 	}

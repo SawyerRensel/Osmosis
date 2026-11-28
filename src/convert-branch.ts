@@ -177,6 +177,11 @@ async function inheritCardKeys(ctx: MoveContext, file: TFile, content: string): 
  * Move the branch's entries in the source's `osmosis-styles.styles` to the new
  * note: `^id` keys as they are, `_n:` keys re-keyed by line position (see
  * `stableSelectorPairs`). Tree-path and class selectors stay behind.
+ *
+ * Each side in its own mode: the source's styles are read from, and removed
+ * from, the file that holds them (its sidecar's whole `osmosis-styles` wins
+ * over the note's, as `NoteData` reads it); the new note's go wherever
+ * `targetFor` puts its data (`dataLocation`, for a note this new).
  */
 async function moveStyles(
 	ctx: MoveContext,
@@ -187,7 +192,10 @@ async function moveStyles(
 	body: string,
 	moved: MovedTargets,
 ): Promise<void> {
-	const mapping = frontmatterValue(content, "osmosis-styles");
+	const sidecar = ctx.plugin.noteData.sidecarOf(source);
+	const sidecarMapping = sidecar ? frontmatterValue(await ctx.app.vault.read(sidecar), "osmosis-styles") : undefined;
+	const home = sidecar && sidecarMapping !== undefined ? sidecar : source;
+	const mapping = home === source ? frontmatterValue(content, "osmosis-styles") : sidecarMapping;
 	const styles = isRecord(mapping) && isRecord(mapping["styles"]) ? mapping["styles"] : null;
 	if (styles === null) return;
 	const pairs = stableSelectorPairs(line, new OsmosisParser().parse(body, file.path).root);
@@ -195,11 +203,11 @@ async function moveStyles(
 	if (Object.keys(split.moved).length === 0) return;
 	const gone = Object.keys(styles).filter((key) => !(key in split.retained));
 	try {
-		await ctx.processFrontMatter(file, (fm) => {
+		await ctx.processFrontMatter(await ctx.plugin.noteData.targetFor(file), (fm) => {
 			const target = styleMappingFor(fm);
 			target["styles"] = { ...(isRecord(target["styles"]) ? target["styles"] : {}), ...split.moved };
 		});
-		await ctx.processFrontMatter(source, (fm) => {
+		await ctx.processFrontMatter(home, (fm) => {
 			const left = styleMappingFor(fm);
 			const current = isRecord(left["styles"]) ? left["styles"] : {};
 			for (const key of gone) delete current[key];

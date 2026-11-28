@@ -2,7 +2,7 @@ import { Component, MarkdownRenderer, Menu, setIcon, type MarkdownPostProcessorC
 import type OsmosisPlugin from "../main";
 import { fenceDiagrams, fenceEmbedLine, stripEmbedLabels } from "../card-gen/occlusion";
 import type { FSRSRating } from "../database/FSRSScheduler";
-import type { Card, CardOcclusion, ScheduleData } from "../database/types";
+import type { Card, CardOcclusion, OcclusionSet, ScheduleData } from "../database/types";
 import { mountRatingAnchor, removeRatingAnchors, renderOcclusion, repaintOcclusion } from "./OcclusionRenderer";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
@@ -118,6 +118,24 @@ export class NoteStudyProcessor {
 		restart: () => void;
 		/** Draw the fence again from the state held here, keeping its place — for undo. */
 		redraw: () => void;
+		/** What the fence was parsed into; `exclude` is updated in place by {@link showExclude}. */
+		parsed: ParsedFence;
+	}[] = [];
+	/**
+	 * Fences of sidecar-mode notes as rendered, with the shape sets they were
+	 * drawn from. Their shapes live in the sidecar, so saving them leaves the
+	 * note's text alone and Obsidian never re-runs the processor: these are
+	 * drawn again by {@link redrawChangedShapes} instead. Pruned like
+	 * `trackedFences` — only once superseded.
+	 */
+	private readonly sidecarFences: {
+		el: HTMLElement;
+		source: string;
+		sourcePath: string;
+		fenceId: string;
+		live: boolean;
+		/** The fence's sidecar shape sets when drawn, serialized; `""` when the header's were used. */
+		shapes: string;
 	}[] = [];
 	/**
 	 * The height each reading-view fence last rendered to, by its source text.
@@ -166,9 +184,55 @@ export class NoteStudyProcessor {
 
 					el.removeClass("osmosis-fence-held");
 					this.registerOcclusionMenu(source, el, ctx);
+					this.trackSidecarFence(el, source, ctx.sourcePath, inLivePreview);
 				});
 			},
 		);
+
+		this.plugin.register(this.plugin.noteData.onChange((notePath) => this.redrawChangedShapes(notePath)));
+	}
+
+	/** The shape sets a fence's sidecar entry gives it, serialized for comparison. */
+	private static sidecarShapesKey(sets: ReadonlyMap<string, OcclusionSet> | undefined): string {
+		return sets ? JSON.stringify([...sets]) : "";
+	}
+
+	/** Remember a sidecar-mode note's fence so a later shape write can redraw it. */
+	private trackSidecarFence(el: HTMLElement, source: string, sourcePath: string, live: boolean): void {
+		const fenceId = this.extractIdFromSource(source);
+		if (fenceId === null || !this.inSidecar(sourcePath)) return;
+		for (let i = this.sidecarFences.length - 1; i >= 0; i--) {
+			const entry = this.sidecarFences[i]!;
+			if (entry.el === el || (entry.sourcePath === sourcePath && entry.fenceId === fenceId && !entry.el.isConnected)) {
+				this.sidecarFences.splice(i, 1);
+			}
+		}
+		const shapes = NoteStudyProcessor.sidecarShapesKey(this.sidecarOcclusions(source, sourcePath));
+		this.sidecarFences.push({ el, source, sourcePath, fenceId, live, shapes });
+	}
+
+	/**
+	 * A note's sidecar changed: draw again each of its fences whose shape sets
+	 * differ from what it shows. Reviews change the sidecar too, and redraw
+	 * nothing — a fence is rebuilt only when its masks actually moved.
+	 */
+	private redrawChangedShapes(notePath: string): void {
+		const file = this.plugin.app.vault.getFileByPath(notePath);
+		if (!file) return;
+		const overlays = this.plugin.fenceOverlays(file);
+		for (const entry of [...this.sidecarFences]) {
+			if (entry.sourcePath !== notePath) continue;
+			const shapes = NoteStudyProcessor.sidecarShapesKey(overlays.get(entry.fenceId)?.occlusions);
+			if (shapes === entry.shapes) continue;
+			entry.shapes = shapes;
+			entry.el.empty();
+			if (entry.live) {
+				this.renderPreviewCard(entry.source, entry.el, notePath);
+			} else {
+				this.renderCard(entry.source, entry.el, notePath);
+				this.rememberHeight(entry.source, entry.el);
+			}
+		}
 	}
 
 	/**
@@ -230,6 +294,7 @@ export class NoteStudyProcessor {
 		fenceId: string,
 		restart: () => void,
 		redraw: () => void,
+		parsed: ParsedFence,
 	): void {
 		for (let i = this.trackedFences.length - 1; i >= 0; i--) {
 			const entry = this.trackedFences[i]!;
@@ -237,7 +302,7 @@ export class NoteStudyProcessor {
 				this.trackedFences.splice(i, 1);
 			}
 		}
-		this.trackedFences.push({ el, sourcePath, fenceId, restart, redraw });
+		this.trackedFences.push({ el, sourcePath, fenceId, restart, redraw, parsed });
 	}
 
 	/**
@@ -298,11 +363,12 @@ export class NoteStudyProcessor {
 	 * under handlers that are bound only here.
 	 */
 	private renderCard(source: string, el: HTMLElement, sourcePath: string): void {
-		const parsed = this.parseFenceContent(source);
+		const parsed = this.parseFenceContent(source, this.sidecarOcclusions(source, sourcePath));
 		if (!parsed) {
 			this.renderDraft(source, el, sourcePath);
 			return;
 		}
+		this.applySidecarExclude(parsed, sourcePath);
 
 		// An occluded fence is drawn once and repainted, never rebuilt — see
 		// `renderOcclusionCard`. Both what it shows and how it flips differ from
@@ -424,7 +490,7 @@ export class NoteStudyProcessor {
 		this.trackFence(container, sourcePath, parsed.cardId, () => {
 			this.resetFenceState(parsed.cardId);
 			draw();
-		}, draw);
+		}, draw, parsed);
 	}
 
 	/**
@@ -707,7 +773,7 @@ export class NoteStudyProcessor {
 		this.trackFence(container, sourcePath, parsed.cardId, () => {
 			this.resetFenceState(parsed.cardId);
 			draw();
-		}, draw);
+		}, draw, parsed);
 	}
 
 	/**
@@ -735,8 +801,48 @@ export class NoteStudyProcessor {
 		);
 		toggleIcon.addEventListener("click", (e) => {
 			e.stopPropagation();
-			void this.toggleExclude(parsed.cardId, !parsed.exclude, sourcePath);
+			const exclude = !parsed.exclude;
+			void this.toggleExclude(parsed.cardId, exclude, sourcePath).then(() => {
+				// A sidecar write leaves the note alone, so nothing re-renders this
+				// card (the live preview's included): show the new state here.
+				if (!this.inSidecar(sourcePath)) return;
+				parsed.exclude = exclude;
+				toggleIcon.closest(".osmosis-note-card")?.toggleClass("osmosis-note-excluded", exclude);
+				setIcon(toggleIcon, exclude ? "eye-off" : "eye");
+				toggleIcon.setAttribute("aria-label", exclude ? "Include this card" : "Exclude this card");
+			});
 		});
+	}
+
+	private inSidecar(sourcePath: string): boolean {
+		const file = this.plugin.app.vault.getFileByPath(sourcePath);
+		return file !== null && this.plugin.noteData.modeOf(file) === "sidecar";
+	}
+
+	/**
+	 * A sidecar-mode fence keeps `exclude` in its sidecar's `osmosis-fences`
+	 * entry, which owns the fence once it exists — the header's `exclude:` is
+	 * stale then, so the entry decides.
+	 */
+	private applySidecarExclude(parsed: ParsedFence, sourcePath: string): void {
+		const file = this.plugin.app.vault.getFileByPath(sourcePath);
+		const overlay = file ? this.plugin.fenceOverlays(file).get(parsed.cardId) : undefined;
+		if (overlay) parsed.exclude = overlay.exclude;
+	}
+
+	/**
+	 * Show a fence's new `exclude` on every tracked card of it, after a sidecar
+	 * write the note will not re-render for. Note mode needs none of this: the
+	 * fence's own text changed, so Obsidian draws it again.
+	 */
+	private showExclude(sourcePath: string, fenceId: string, exclude: boolean): void {
+		if (!this.inSidecar(sourcePath)) return;
+		for (const entry of this.trackedFences) {
+			if (entry.sourcePath !== sourcePath || entry.fenceId !== fenceId) continue;
+			entry.parsed.exclude = exclude;
+			entry.el.toggleClass("osmosis-note-excluded", exclude);
+			entry.redraw();
+		}
 	}
 
 	/**
@@ -922,11 +1028,12 @@ export class NoteStudyProcessor {
 
 	/** Live preview: render front and back fully visible (no interactivity). */
 	private renderPreviewCard(source: string, el: HTMLElement, sourcePath: string): void {
-		const parsed = this.parseFenceContent(source);
+		const parsed = this.parseFenceContent(source, this.sidecarOcclusions(source, sourcePath));
 		if (!parsed) {
 			this.renderDraft(source, el, sourcePath);
 			return;
 		}
+		this.applySidecarExclude(parsed, sourcePath);
 
 		const container = el.createDiv({ cls: "osmosis-note-card" });
 
@@ -1063,6 +1170,7 @@ export class NoteStudyProcessor {
 		const file = this.plugin.app.vault.getFileByPath(sourcePath);
 		if (!file) return;
 		await this.plugin.fenceWriter.writeExclude(file, cardId, exclude);
+		this.showExclude(sourcePath, cardId, exclude);
 	}
 
 	/**
@@ -1083,6 +1191,7 @@ export class NoteStudyProcessor {
 			const file = this.plugin.app.vault.getFileByPath(entry.sourcePath);
 			if (file) {
 				await this.plugin.fenceWriter.writeExclude(file, entry.cardId, entry.previousExclude ?? false);
+				this.showExclude(entry.sourcePath, entry.cardId, entry.previousExclude ?? false);
 			}
 		} else {
 			// Undo rating: revert schedule
@@ -1159,12 +1268,27 @@ export class NoteStudyProcessor {
 	);
 
 	/**
+	 * A sidecar-mode fence's shape sets, by embed label — undefined when the
+	 * header's own are the truth. The fence's sidecar entry owns it once it
+	 * exists, so an entry with no shapes means none, whatever the header says.
+	 */
+	private sidecarOcclusions(source: string, sourcePath: string): Map<string, OcclusionSet> | undefined {
+		const fenceId = this.extractIdFromSource(source);
+		if (fenceId === null) return undefined;
+		const file = this.plugin.app.vault.getFileByPath(sourcePath);
+		return file ? this.plugin.fenceOverlays(file).get(fenceId)?.occlusions : undefined;
+	}
+
+	/**
 	 * Parse fence content into front/back/metadata.
 	 * Reuses the same format as explicit.ts card generators.
+	 *
+	 * `sidecarSets` replaces the header's shape sets (see {@link sidecarOcclusions}).
 	 */
-	private parseFenceContent(source: string): ParsedFence | null {
+	private parseFenceContent(source: string, sidecarSets?: Map<string, OcclusionSet>): ParsedFence | null {
 		const lines = source.split("\n");
-		const { contentStart, exclude, hasOcclusion } = splitFenceHeader(lines);
+		const { contentStart, exclude, hasOcclusion: headerOcclusion } = splitFenceHeader(lines);
+		const hasOcclusion = sidecarSets ? sidecarSets.size > 0 : headerOcclusion;
 		// Stripped once, here, rather than per branch: an embed's `{a}` binds it
 		// to a shape set and is never meant to be seen. Doing it inside the
 		// occlusion branch alone let the label through on any fence that also had
@@ -1190,7 +1314,7 @@ export class NoteStudyProcessor {
 		// through to the raw-source fallback and reading view shows the shape
 		// block as literal text.
 		if (hasOcclusion) {
-			const { diagrams, prose } = fenceDiagrams(lines, contentStart);
+			const { diagrams, prose } = fenceDiagrams(lines, contentStart, sidecarSets);
 			if (diagrams.length > 0) {
 				const cardId = this.extractIdFromSource(source) ?? this.hashContent(`occlusion|||${content}`);
 				return { front: prose, back: prose, cardId, exclude, isCloze: true, occlusions: diagrams };

@@ -1,6 +1,7 @@
 import { App, PluginSettingTab, Setting, SettingDefinitionItem, AbstractInputSuggest, TFolder, getAllTags } from "obsidian";
 import OsmosisPlugin from "./main";
 import { normalizeLogFolder } from "./store/ReviewLog";
+import type { DataLocation } from "./store/NoteData";
 import type { BranchLineStyle, MapSettings } from "./styles";
 import type { MindMapDefaultMode } from "./reading-mode";
 import { DEFAULT_OVERLAYS, type CosmosOverlays } from "./cosmos/overlays";
@@ -128,6 +129,23 @@ export interface OsmosisSettings {
 	 */
 	installId: string;
 
+	// ── Data storage ────────────────────────────────────────
+	/**
+	 * Where a note with no Osmosis data yet gets its line-card schedules: its
+	 * own frontmatter, or a sidecar file. A note that already has data keeps it
+	 * where it is; changing this moves nothing.
+	 */
+	dataLocation: DataLocation;
+	/** The flat folder holding sidecar files (`<note name>.osmosis.md`). */
+	sidecarFolder: string;
+	/**
+	 * Set once Osmosis has put the sidecar folder in Obsidian's Excluded files.
+	 * Load adds it once for a folder that already exists; after that only
+	 * creating the folder or changing this setting does, so a user who takes the
+	 * entry out keeps it out.
+	 */
+	sidecarFolderExcluded: boolean;
+
 	// ── Note Inclusion Settings ────────────────────────────
 	/** Folder paths that auto-enable card generation (without osmosis-cards: true). */
 	includeFolders: string[];
@@ -208,6 +226,11 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	reviewLogFolder: "Osmosis/Reviews",
 	reviewLogDeviceLabel: "",
 	installId: "",
+
+	// Data storage defaults
+	dataLocation: "sidecar",
+	sidecarFolder: "Osmosis/Schedule",
+	sidecarFolderExcluded: false,
 
 	// Note inclusion defaults
 	includeFolders: [],
@@ -497,6 +520,38 @@ export class OsmosisSettingTab extends PluginSettingTab {
 								placeholder: this.plugin.resolveDeviceLabel(),
 								normalize: (raw) => raw.trim(),
 								onCommit: (label) => this.plugin.setReviewLogDeviceLabel(label),
+							});
+						},
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Data storage",
+				items: [
+					{
+						name: "Data location",
+						desc:
+							"Where a note's flashcard schedules go when it has none yet: a sidecar file keeps the note's properties short. "
+							+ "Notes that already have data keep it where it is: changing this moves nothing. To move data, use the \"Move data\" commands.",
+						control: {
+							type: "dropdown",
+							key: "dataLocation",
+							options: { sidecar: "Sidecar file", note: "Note properties" },
+						},
+					},
+					{
+						name: "Sidecar folder",
+						desc:
+							"Where sidecar files are kept. Changing it moves the existing sidecar files. "
+							+ "The folder is added to Settings → Files and links → Excluded files, which keeps it out of search and the quick switcher.",
+						render: (setting) => {
+							this.buildPathInput(setting, {
+								value: this.plugin.settings.sidecarFolder,
+								placeholder: DEFAULT_SETTINGS.sidecarFolder,
+								createSuggest: (input) => new FolderSuggest(this.app, input),
+								normalize: (raw) => normalizeLogFolder(raw, DEFAULT_SETTINGS.sidecarFolder),
+								onCommit: (folder) => this.plugin.changeSidecarFolder(folder),
 							});
 						},
 					},

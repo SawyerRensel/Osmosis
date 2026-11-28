@@ -21,10 +21,11 @@
 import type { CachedMetadata } from "obsidian";
 import type { CardOcclusion } from "../database/types";
 import type { OcclusionSide } from "../study/occlusion-masks";
-import type { NodeStyle } from "../styles";
+import type { BranchStyle, NodeStyle } from "../styles";
 import type { OsmosisNode, OsmosisTree } from "../types";
 import { isPanelMedia } from "./near";
-import { noteStyleReader } from "./node-style";
+import { noteMaxWidth, noteStyleReader, type ThemeLookup } from "./node-style";
+import { noteBranchLayers, resolveBranch } from "./branch-look";
 
 export type GraphNodeKind = "note" | "line" | "tag" | "attachment" | "ghost";
 
@@ -52,9 +53,22 @@ export interface GraphNode {
 	root?: boolean;
 	/**
 	 * Note and line nodes: the node's resolved `osmosis-styles` style, as the
-	 * mind map resolves it (`noteStyleReader`). Absent for a node with none.
+	 * mind map resolves it (`noteStyleReader`), its theme included in the *Mind
+	 * map style* colour mode only. Absent for a node with none.
 	 */
 	style?: NodeStyle;
+	/**
+	 * Note and line nodes: the note's map-level `osmosis-styles.maxNodeWidth`
+	 * (`noteMaxWidth`), in mind-map px, where it sets one: a line's text wraps
+	 * there (`panelWidthRule`). Absent for none.
+	 */
+	maxWidth?: number;
+	/**
+	 * Line nodes: the branch line the hierarchy edge into this node is drawn
+	 * in, its own `branchLine` over its note's theme and map-level `branchLine*`
+	 * keys (`resolveBranch`). Absent for none: a plain edge.
+	 */
+	branch?: BranchStyle;
 }
 
 /**
@@ -96,6 +110,8 @@ export interface BuildOptions {
 	contentOnly?: boolean;
 	/** The plugin's global style classes, for nodes whose style names one (`noteStyleReader`). */
 	globalClasses?: Record<string, NodeStyle>;
+	/** The *Mind map style* colour mode only: finds each note's mind map theme, so it styles the note's nodes (`noteStyleReader`). */
+	themes?: ThemeLookup;
 }
 
 /**
@@ -183,10 +199,13 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver, o
 		const coreId = only === undefined ? noteNodeId(path) : null;
 		// A sole H1 is the root under the core's ID, so it keeps its place across edits to its text.
 		const h1 = coreId === null ? null : soleH1(tree.root);
-		const styleOf = noteStyleReader(cache?.frontmatter, tree.root, options.globalClasses);
-		const styled = (node: OsmosisNode): { style?: NodeStyle } => {
+		const styleOf = noteStyleReader(cache?.frontmatter, tree.root, options.globalClasses, options.themes);
+		const maxWidth = noteMaxWidth(cache?.frontmatter);
+		const layers = noteBranchLayers(cache?.frontmatter, options.themes);
+		const styled = (node: OsmosisNode): { style?: NodeStyle; maxWidth?: number; branch?: BranchStyle } => {
 			const style = styleOf?.(node);
-			return style === undefined ? {} : { style };
+			const branch = resolveBranch(style?.branchLine, layers);
+			return { ...(style === undefined ? {} : { style }), ...(maxWidth === undefined ? {} : { maxWidth }), ...(branch === undefined ? {} : { branch }) };
 		};
 		if (coreId !== null && h1 === null) nodes.set(coreId, { id: coreId, kind: "note", label: noteTitle(path), path, source: tree.root, ...styled(tree.root) });
 		const index: NoteIndex = { path, coreId, lines: [], byBlockId: new Map(), byHeading: new Map() };

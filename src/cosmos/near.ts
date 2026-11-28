@@ -9,6 +9,9 @@ import { isLineGroup } from "../line-groups";
 import { stripTrailingBlockId } from "../block-id";
 import type { GraphNode } from "./model";
 import { PLATE_PAD_X_EM } from "./plates";
+import { MAP_FONT_PX, nodeLook, textScale } from "./node-style";
+import { shapeBox, shapeWrapEm } from "./plate-shapes";
+import { DEFAULT_LAYOUT_CONFIG } from "../layout";
 
 /** Attachments shown live up close: images, audio and video. PDFs and the rest stay plates. */
 const MEDIA_EXTENSIONS = new Set([
@@ -113,8 +116,9 @@ export const PANEL_MEDIA_MAX_EM = 15;
 
 const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "m4a", "ogg", "flac", "3gp"]);
 /** Panel padding either side, in ems (`.osmosis-cosmos-near-panel`). */
-const PAD_X = 0.4;
-const PAD_Y = 0.25;
+export const PANEL_PAD_EM = { x: 0.4, y: 0.25 } as const;
+const PAD_X = PANEL_PAD_EM.x;
+const PAD_Y = PANEL_PAD_EM.y;
 /** A rough average advance per character, in ems: prose, and monospace code at Obsidian's smaller code size. */
 const PROSE_EM_PER_CHAR = 0.5;
 const CODE_EM_PER_CHAR = 0.55;
@@ -254,24 +258,35 @@ function cardSides(markdown: string): { front: string[]; back: string[] } | null
  * Mind-map px a panel em stands for in a node's `width` style: the map draws
  * node text at 13 px, so a width of 130 is ten ems of panel text. A `width` is
  * the content width, before the node's padding, as the mind map stores it.
+ * A node whose text is `scale` times that size (`textScale`) has ems that
+ * many times wider, so the same px are fewer of its ems.
  */
-export const STYLE_PX_PER_EM = 13;
+export const STYLE_PX_PER_EM = MAP_FONT_PX;
 /** The narrowest a dragged width goes, in mind-map px: the map's 60 px node less its padding. */
 export const MIN_STYLE_WIDTH_PX = 44;
 
-/** A panel's total width, in ems, for a node `width` style of `px`: the content plus the panel's padding. */
-export const styleWidthEm = (px: number): number => px / STYLE_PX_PER_EM + 2 * PAD_X;
+/** A panel's total width, in ems of its text (`scale` × panel text), for a node `width` style of `px`: the content plus the panel's padding. */
+export const styleWidthEm = (px: number, scale = 1): number => px / (STYLE_PX_PER_EM * scale) + 2 * PAD_X;
 
-/** The `width` style for a panel (or plate) `em` ems wide in all, as the drag handle writes it. */
-export const styleWidthFromEm = (em: number): number => Math.max(MIN_STYLE_WIDTH_PX, Math.round((em - 2 * PAD_X) * STYLE_PX_PER_EM));
+/** The `width` style for a panel (or plate) `em` ems of its text (`scale` × panel text) wide in all, as the drag handle writes it. */
+export const styleWidthFromEm = (em: number, scale = 1): number => Math.max(MIN_STYLE_WIDTH_PX, Math.round((em - 2 * PAD_X) * STYLE_PX_PER_EM * scale));
+
+/**
+ * The widest a panel with the map's `maxNodeWidth` (`px`, the node's outer
+ * width in the mind map) is laid out, in ems of its text: its text wraps at
+ * the mind map's content width, the node's px padding taken off.
+ */
+export const maxWidthEm = (px: number, scale = 1): number => styleWidthEm(Math.max(MIN_STYLE_WIDTH_PX, px - 2 * DEFAULT_LAYOUT_CONFIG.nodePaddingX), scale);
 
 /**
  * How wide a line node's panel (and plate) is laid out:
  * - `custom`: the node's `width` style, exactly that wide, wrapping at it;
  * - `code`: a code block with no custom width, as wide as its longest line up to
  *   `CODE_FIT_MAX_COLUMNS`, then wrapping (the mind map does the same in px);
- * - `default`: up to `PANEL_MAX_EM.width`, as wide as its content.
- * `em` is the width for `custom` and `code`, the cap for `default`.
+ * - `default`: up to `PANEL_MAX_EM.width`, or the map's `maxNodeWidth`
+ *   (`maxWidthEm`), as wide as its content.
+ * `em` is the width for `custom` and `code`, the cap for `default`. Every em
+ * is one of the node's own text (`textScale`).
  */
 export interface PanelWidthRule {
 	kind: "custom" | "code" | "default";
@@ -284,10 +299,11 @@ const DEFAULT_WIDTH: PanelWidthRule = { kind: "default", em: PANEL_MAX_EM.width 
 export function panelWidthRule(node: GraphNode, markdown?: string | null): PanelWidthRule {
 	if (node.kind !== "line" || node.source === undefined) return DEFAULT_WIDTH;
 	const width = node.style?.width;
-	if (typeof width === "number" && Number.isFinite(width) && width > 0) return { kind: "custom", em: styleWidthEm(width) };
-	if (node.source.type !== "codeblock") return DEFAULT_WIDTH;
+	if (typeof width === "number" && Number.isFinite(width) && width > 0) return { kind: "custom", em: styleWidthEm(width, textScale(node.style)) };
+	const fallback = node.maxWidth === undefined ? DEFAULT_WIDTH : { kind: "default" as const, em: maxWidthEm(node.maxWidth, textScale(node.style)) };
+	if (node.source.type !== "codeblock") return fallback;
 	const text = markdown === undefined ? nearMarkdown(node) : markdown;
-	if (text === null || cardSides(text) !== null) return DEFAULT_WIDTH;
+	if (text === null || cardSides(text) !== null) return fallback;
 	return { kind: "code", em: codeFitColumns(text) * CODE_EM_PER_CHAR + PRE_PAD.x + 2 * PAD_X };
 }
 
@@ -299,6 +315,17 @@ export function panelWidthRule(node: GraphNode, markdown?: string | null): Panel
 export function plateWidthEm(node: GraphNode): { textMaxEm: number; minEm: number } | null {
 	const rule = panelWidthRule(node);
 	return rule.kind === "default" ? null : { textMaxEm: Math.max(0, rule.em - 2 * PLATE_PAD_X_EM), minEm: rule.em };
+}
+
+/**
+ * Where a line plate sized by its label has its text cut, in ems of its text,
+ * when the map sets `maxNodeWidth`: where its panel wraps (`maxWidthEm`).
+ * Null for the scene's own cap, and for a plate whose width is set (`plateWidthEm`).
+ */
+export function plateCapEm(node: GraphNode): number | null {
+	if (node.maxWidth === undefined) return null;
+	const rule = panelWidthRule(node);
+	return rule.kind === "default" ? Math.max(0, rule.em - 2 * PLATE_PAD_X_EM) : null;
 }
 
 /**
@@ -327,7 +354,9 @@ export function panelBoxEm(node: GraphNode): { width: number; height: number } |
 		return AUDIO_EXTENSIONS.has(extension(node.path ?? "")) ? { ...AUDIO_EM } : { width: PANEL_MAX_EM.width, height: PANEL_MEDIA_MAX_EM + 2 * PAD_Y };
 	}
 	const rule = panelWidthRule(node, markdown);
-	const wrap = rule.em - 2 * PAD_X;
+	const shape = nodeLook(node.style).shape;
+	// A shape's text wraps narrower, as the panel's does (`shapeWrapEm`), unless its width is set.
+	const wrap = rule.kind === "custom" ? rule.em - 2 * PAD_X : shapeWrapEm(shape, rule.em, PAD_X);
 	let width: number;
 	let height: number;
 	const card = cardSides(markdown);
@@ -339,8 +368,7 @@ export function panelBoxEm(node: GraphNode): { width: number; height: number } |
 		// An unasked back still shows its placeholder row.
 		height = CARD_CHROME_Y + sides.reduce((sum, side) => sum + Math.max(PROSE_ROW, side.height) + (side.blocks + 1) * CARD_BLOCK_GAP, 0);
 	}
-	return {
-		width: rule.kind === "custom" ? rule.em : Math.min(rule.em, width + 2 * PAD_X),
-		height: height + 2 * PAD_Y,
-	};
+	// A shaped node's panel is its content inflated to hold it in the shape's inner box, as its plate is (`shapeBox`).
+	const box = shapeBox(shape, rule.kind === "custom" ? rule.em : Math.min(wrap, width) + 2 * PAD_X, height + 2 * PAD_Y);
+	return { width: box.width, height: box.height };
 }

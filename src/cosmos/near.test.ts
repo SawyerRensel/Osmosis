@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { MIN_STYLE_WIDTH_PX, PANEL_MAX_EM, PANEL_MEDIA_MAX_EM, nearMarkdown, panelBoxEm, panelWidthRule, plateWidthEm, styleWidthEm, styleWidthFromEm, unembed } from "./near";
+import { MIN_STYLE_WIDTH_PX, PANEL_MAX_EM, PANEL_MEDIA_MAX_EM, maxWidthEm, nearMarkdown, panelBoxEm, panelWidthRule, plateCapEm, plateWidthEm, styleWidthEm, styleWidthFromEm, unembed } from "./near";
+import { PLATE_PAD_X_EM } from "./plates";
 import type { CardOcclusion } from "../database/types";
 import type { GraphNode } from "./model";
 import type { OsmosisNode } from "../types";
@@ -355,5 +356,65 @@ describe("nearMarkdown for a line group (T75)", () => {
 		expect(nearMarkdown(line("![[cover.png]]"))).toBe("![[cover.png]]");
 		expect(nearMarkdown(line("- Object ![[cover.png|314]] ^os-a", "Object ![[cover.png|314]]"))).toBe("- Object ![[cover.png|314]] ^os-a");
 		expect(nearMarkdown(line("- See ![[Knots]]", "See ![[Knots]]"))).toBe("- See [[Knots]]");
+	});
+});
+
+describe("shaped panels (T130)", () => {
+	it("inflates a shaped node's panel box as its plate is", () => {
+		const plain = panelBoxEm(line("- Clove hitch"))!;
+		const diamond = panelBoxEm({ ...line("- Clove hitch"), style: { shape: "diamond" } })!;
+		expect(diamond.width).toBeCloseTo(plain.width * 2);
+		expect(diamond.height).toBeCloseTo(plain.height * 2);
+		const circle = panelBoxEm({ ...line("- Clove hitch"), style: { shape: "circle" } })!;
+		expect(circle.width).toBe(circle.height);
+	});
+
+	it("wraps a shaped panel's long text narrower, so the shape comes out at the cap (T130 fix 1)", () => {
+		const sentence = "- " + "Reef the main before the squall reaches the anchorage ".repeat(2).trim();
+		const plain = panelBoxEm(line(sentence))!;
+		const hexagon = panelBoxEm({ ...line(sentence), style: { shape: "hexagon" } })!;
+		// Not 20 / 0.56 = 35.7 ems: the text wraps at 20 * 0.56 - 0.8 ems, and the hexagon round it is the cap.
+		expect(plain.width).toBeCloseTo(PANEL_MAX_EM.width);
+		expect(hexagon.width).toBeLessThanOrEqual(PANEL_MAX_EM.width + 1e-9);
+		expect(hexagon.height).toBeGreaterThan(plain.height);
+	});
+});
+
+describe("text size and maxNodeWidth (T131)", () => {
+	const big = (node: GraphNode): GraphNode => ({ ...node, style: { text: { size: 26 } } });
+
+	it("counts a width style in ems of the node's own text", () => {
+		expect(styleWidthEm(260, 2)).toBeCloseTo(styleWidthEm(130));
+		expect(styleWidthFromEm(styleWidthEm(260, 2), 2)).toBe(260);
+		const wide = { ...line("- Clove hitch"), style: { width: 260, text: { size: 26 } } };
+		expect(panelWidthRule(wide)).toEqual({ kind: "custom", em: styleWidthEm(260, 2) });
+	});
+
+	it("keeps a big node's default cap in its own ems, so its panel is that much wider", () => {
+		expect(panelWidthRule(big(line("- Clove hitch")))).toEqual({ kind: "default", em: PANEL_MAX_EM.width });
+		expect(plateCapEm(big(line("- Clove hitch")))).toBeNull();
+	});
+
+	it("wraps at the map's maxNodeWidth less the mind map's padding, fewer ems for bigger text", () => {
+		const capped = { ...line("- Clove hitch"), maxWidth: 146 };
+		expect(maxWidthEm(146)).toBeCloseTo(10 + 0.8);
+		expect(panelWidthRule(capped)).toEqual({ kind: "default", em: maxWidthEm(146) });
+		expect(panelWidthRule(big(capped)).em).toBeCloseTo(5 + 0.8);
+		expect(plateCapEm(capped)).toBeCloseTo(maxWidthEm(146) - 2 * PLATE_PAD_X_EM);
+	});
+
+	it("wraps a long line taller at a narrow maxNodeWidth", () => {
+		const text = "word ".repeat(40);
+		expect(panelBoxEm({ ...line(text), maxWidth: 120 })!.height).toBeGreaterThan(panelBoxEm(line(text))!.height);
+	});
+
+	it("lets a node's own width beat the map's maxNodeWidth", () => {
+		const node = { ...line("- Clove hitch"), maxWidth: 120, style: { width: 400 } };
+		expect(panelWidthRule(node)).toEqual({ kind: "custom", em: styleWidthEm(400) });
+		expect(plateCapEm(node)).toBeNull();
+	});
+
+	it("never narrows past the narrowest node", () => {
+		expect(maxWidthEm(10)).toBeCloseTo(styleWidthEm(MIN_STYLE_WIDTH_PX));
 	});
 });

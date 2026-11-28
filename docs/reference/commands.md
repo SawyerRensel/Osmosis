@@ -52,6 +52,15 @@ already opted in.
 | **Exclude line cards in selection from study** | Pauses those cards, keeping their history |
 | **Include line cards in selection in study** | Resumes them |
 
+## Data Storage
+
+| Command | What it does |
+|---------|--------------|
+| **Move data to sidecar** | Moves the current note's schedules, fence review data and map styles into its [sidecar file](data-storage.md#sidecar-files) |
+| **Move data into note** | Moves them back into the note's properties and fence headers, and trashes the sidecar |
+| **Move all data to sidecars** | The same for every note with data, after a confirmation. A notice gives the counts |
+| **Move all data into notes** | The same for every sidecar, after a confirmation. A notice gives the counts |
+
 ## Menus and Header Actions
 
 Not everything is a command. These are the surfaces that reach Osmosis directly:

@@ -315,7 +315,8 @@ export class PropertiesSidebarView extends ItemView {
 	 * Write map-level frontmatter, recording an undo snapshot on the active map so
 	 * the change is undoable/redoable (map-style writes bypass CodeMirror, like the
 	 * mind map's own style writes). Falls back to a plain untracked write when no
-	 * map view is active — there is nothing to record onto.
+	 * map view is active — there is nothing to record onto. Either way it lands
+	 * where the note keeps its `osmosis-styles`: the note, or its sidecar.
 	 */
 	private async writeMapFrontMatter(
 		file: TFile,
@@ -323,9 +324,9 @@ export class PropertiesSidebarView extends ItemView {
 		fn: (fm: Record<string, unknown>) => void,
 	): Promise<void> {
 		if (mindMap) {
-			await mindMap.processFrontMatterTracked(file, fn);
+			await mindMap.processStylesTracked(file, fn);
 		} else {
-			await this.app.fileManager.processFrontMatter(file, fn);
+			await this.plugin.noteData.process(file, fn);
 		}
 	}
 

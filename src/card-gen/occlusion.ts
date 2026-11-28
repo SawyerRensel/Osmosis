@@ -831,12 +831,15 @@ export function fenceOcclusions(
  * `lines` is the fence *body*, so the header runs from line 0 and the synthetic
  * span says so. Shared by reading view and the mind map, which paint the same
  * diagrams from the same fence text.
+ *
+ * `sets` replaces the header's shape sets — a sidecar-mode fence's, which its
+ * sidecar entry holds instead.
  */
 export function fenceDiagrams(
 	lines: readonly string[],
 	contentStart: number,
+	sets: ReadonlyMap<string, OcclusionSet> = fenceOcclusions(lines, { start: -1, end: lines.length }),
 ): { diagrams: CardOcclusion[]; prose: string } {
-	const sets = fenceOcclusions(lines, { start: -1, end: lines.length });
 	if (sets.size === 0) return { diagrams: [], prose: "" };
 
 	const raw = lines.slice(contentStart).join("\n");
@@ -875,8 +878,13 @@ export function fenceDiagrams(
  * the store. Allocation is therefore per fence, not per diagram.
  */
 export function usedGroupsInFence(lines: readonly string[], span: FenceSpan): string[] {
+	return usedGroups(fenceOcclusions(lines, span).values());
+}
+
+/** Every distinct `cN` group across `sets` — {@link usedGroupsInFence} for sets already parsed. */
+export function usedGroups(sets: Iterable<OcclusionSet>): string[] {
 	const groups = new Set<string>();
-	for (const set of fenceOcclusions(lines, span).values()) {
+	for (const set of sets) {
 		for (const shape of set.shapes) groups.add(shape.group);
 	}
 	return [...groups];

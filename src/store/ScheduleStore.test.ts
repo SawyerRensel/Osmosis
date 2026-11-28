@@ -319,7 +319,7 @@ describe("ScheduleStore", () => {
 		);
 
 		const store = new ScheduleStore(
-			{ processFrontMatter: processFrontMatter as never },
+			{ process: processFrontMatter as never },
 			(notePath: string) =>
 				options?.missingPaths?.has(notePath)
 					? null
@@ -725,7 +725,7 @@ describe("occlusion writes", () => {
 		// Test double — ScheduleStore only ever reads `.path`.
 		const file = { path: "note.md" } as never;
 		const store = new ScheduleStore(
-			{ processFrontMatter: async (_f, fn: (fm: Record<string, unknown>) => void) => { fn(fm); } },
+			{ process: async (_f, fn: (fm: Record<string, unknown>) => void) => { fn(fm); } },
 			() => file,
 		);
 
@@ -742,7 +742,7 @@ describe("occlusion writes", () => {
 		// Test double — ScheduleStore only ever reads `.path`.
 		const file = { path: "note.md" } as never;
 		const store = new ScheduleStore(
-			{ processFrontMatter: async (_f, fn: (fm: Record<string, unknown>) => void) => { fn(fm); } },
+			{ process: async (_f, fn: (fm: Record<string, unknown>) => void) => { fn(fm); } },
 			() => file,
 		);
 

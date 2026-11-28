@@ -56,17 +56,28 @@ export class CosmosRibbons {
 		this.halfHeight.value = Math.max(1, px / 2);
 	}
 
-	/** Start a rewrite of at most `segments` segments, growing the buffers if they are too small. */
+	/**
+	 * Start a rewrite of about `segments` segments, growing the buffers if they
+	 * are too small. A guess: `segment` grows them again if more come (a branch
+	 * line's curve or elbow has more segments than the scene counts on).
+	 */
 	begin(segments: number): void {
 		this.count = 0;
 		if (this.arrays !== null && segments <= this.capacity) return;
-		const capacity = Math.max(64, Math.ceil(segments * 1.5));
+		this.allocate(Math.max(64, Math.ceil(segments * 1.5)));
+	}
+
+	/** New buffers for `capacity` segments, keeping the first `keep` segments written so far. */
+	private allocate(capacity: number, keep = 0): void {
+		const old = this.arrays;
 		const geometry = this.mesh.geometry;
 		geometry.dispose();
 		const arrays = {} as Record<AttributeName, BufferAttribute>;
 		for (const name of Object.keys(ATTRIBUTES) as AttributeName[]) {
 			const size = ATTRIBUTES[name];
-			arrays[name] = new BufferAttribute(new Float32Array(capacity * 4 * size), size).setUsage(DynamicDrawUsage);
+			const array = new Float32Array(capacity * 4 * size);
+			if (old !== null && keep > 0) array.set((old[name].array as Float32Array).subarray(0, keep * 4 * size));
+			arrays[name] = new BufferAttribute(array, size).setUsage(DynamicDrawUsage);
 			geometry.setAttribute(name, arrays[name]);
 		}
 		// Two triangles a quad: a's two sides, then b's.
@@ -89,8 +100,9 @@ export class CosmosRibbons {
 	 * `period`, 0 = solid), each end's planet core or null (the far-side dim).
 	 */
 	segment(a: Vec3, b: Vec3, wa: number, wb: number, along: number, dash: { on: number; period: number }, color: Color, alpha: number, coreA: Vec3 | null, coreB: Vec3 | null): void {
+		if (this.arrays === null) return;
+		if (this.count >= this.capacity) this.allocate(this.capacity * 2, this.count);
 		const arrays = this.arrays;
-		if (arrays === null || this.count >= this.capacity) return;
 		const [dx, dy, dz] = [b.x - a.x, b.y - a.y, b.z - a.z];
 		const length = Math.hypot(dx, dy, dz);
 		let vertex = this.count * 4;

@@ -10,7 +10,6 @@ import {
 	Notice,
 	Menu,
 	parseLinktext,
-	parseYaml,
 	resolveSubpath,
 	setIcon,
 	type ViewStateResult,
@@ -40,6 +39,7 @@ import { LinkPicker, linkMenuItems } from "../link-pick";
 import { FindBar, type FindHost } from "./FindBar";
 import * as moves from "../edit-moves";
 import type { MoveContext } from "../edit-moves";
+import { mergeNoteData } from "../store/sidecar";
 import { canConvertBranch, convertBranchToNote } from "../convert-branch";
 import { nodePathAt } from "../mindmap-links";
 import { readMapState, writeMapState } from "../mindmap-state";
@@ -98,7 +98,7 @@ import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
 import { colourAnswer, colourBlank, parseHighlightToken } from "../card-gen/cloze-colour";
-import { fenceDiagrams } from "../card-gen/occlusion";
+import { fenceDiagrams, fenceId } from "../card-gen/occlusion";
 import { lineCardId } from "../card-gen/line-cards";
 import {
 	allFenceCardKeys,
@@ -113,7 +113,7 @@ import {
 	mindmapStudyKeys,
 } from "../study/mindmap-study";
 import { countNoteSession, type NoteSessionCard } from "../study/session-counts";
-import type { Card, CardOcclusion } from "../database/types";
+import type { Card, CardOcclusion, OcclusionSet } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
 import { StudyProgressStrip } from "./StudyProgressStrip";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
@@ -426,6 +426,12 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	// Rendered HTML cache: avoids repeated MarkdownRenderer.render() calls for
 	// nodes whose content hasn't changed (keyed by display content string)
 	private nodeHtmlCache = new Map<string, HTMLElement>();
+	/**
+	 * Sidecar-mode fences' shape sets, note path → fence id → label → set, as
+	 * the map last read them. Dropped per note on `noteData.onChange`, which is
+	 * also how a changed set gets redrawn (see `reloadSidecarShapes`).
+	 */
+	private readonly sidecarShapes = new Map<string, Map<string, Map<string, OcclusionSet>>>();
 
 	// Viewport culling state
 	private renderedNodeIds = new Set<string>();
@@ -1137,7 +1143,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 */
 	private getOsmosisCardContent(node: OsmosisNode): OsmosisCardContent | null {
 		if (node.type !== "codeblock") return null;
-		return this.parseOsmosisOcclusion(node.content)
+		return this.parseOsmosisOcclusion(node.content, node.sourceFile)
 			?? this.parseOsmosisFence(node.content)
 			?? this.parseOsmosisCodeCloze(node.content)
 			?? this.parseOsmosisCloze(node.content);
@@ -1152,15 +1158,61 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * geometry as text. Front and back are the same prose here — what differs
 	 * between the sides of an occlusion card is the masks, not the markdown.
 	 */
-	private parseOsmosisOcclusion(content: string): OsmosisCardContent | null {
+	private parseOsmosisOcclusion(content: string, sourceFile: string | undefined): OsmosisCardContent | null {
 		const body = MindMapView.fenceBodyLines(content);
 		if (!body) return null;
 		const { contentStart, hasOcclusion } = splitFenceHeader(body);
-		if (!hasOcclusion) return null;
+		const sets = this.sidecarFenceShapes(body, sourceFile);
+		if (!(sets ? sets.size > 0 : hasOcclusion)) return null;
 
-		const { diagrams, prose } = fenceDiagrams(body, contentStart);
+		const { diagrams, prose } = fenceDiagrams(body, contentStart, sets);
 		if (diagrams.length === 0) return null;
 		return { front: prose, back: prose, occlusions: diagrams };
+	}
+
+	/**
+	 * A sidecar-mode fence's shape sets by embed label, or undefined when its
+	 * header's are the truth. Its sidecar entry owns the fence once it exists, so
+	 * an entry with no shapes means none (see `fence-sidecar.ts`).
+	 *
+	 * `body` is the fence body, header first. Memoised per note in
+	 * {@link sidecarShapes}, since every draw asks for every fence node.
+	 */
+	private sidecarFenceShapes(body: readonly string[], sourceFile: string | undefined): Map<string, OcclusionSet> | undefined {
+		const id = fenceId(body, { start: -1, end: body.length });
+		const path = sourceFile ?? this.currentFile?.path;
+		if (id === null || path === undefined) return undefined;
+		return this.sidecarShapesOf(path).get(id);
+	}
+
+	/** Every fence's sidecar shape sets in one note, by fence id; memoised in {@link sidecarShapes}. */
+	private sidecarShapesOf(path: string): Map<string, Map<string, OcclusionSet>> {
+		let shapes = this.sidecarShapes.get(path);
+		if (!shapes) {
+			const file = this.app.vault.getFileByPath(path);
+			const overlays = file ? this.plugin.fenceOverlays(file) : new Map<string, { occlusions: Map<string, OcclusionSet> }>();
+			shapes = new Map([...overlays].map(([id, overlay]) => [id, overlay.occlusions]));
+			this.sidecarShapes.set(path, shapes);
+		}
+		return shapes;
+	}
+
+	/**
+	 * A note's sidecar changed: if the map drew any of its fences, re-read their
+	 * shape sets and redraw when they moved. A sidecar shape write leaves the
+	 * note's text alone, so nothing else would repaint the masks. A review
+	 * changes the sidecar too and redraws nothing here.
+	 */
+	private reloadSidecarShapes(notePath: string): void {
+		const before = this.sidecarShapes.get(notePath);
+		if (!before) return;
+		this.sidecarShapes.delete(notePath);
+		const after = this.sidecarShapesOf(notePath);
+		if (JSON.stringify([...before].map(([id, sets]) => [id, [...sets]]))
+			=== JSON.stringify([...after].map(([id, sets]) => [id, [...sets]]))) return;
+		// Mid-gesture draws are the gesture's own; the next one reads the new shapes.
+		if (this.edits.recorder.live || this.edits.recorder.grouping || this.editingNodeId) return;
+		void this.render(true);
 	}
 
 	/**
@@ -2166,6 +2218,15 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
 				if (!(file instanceof TFile)) return;
+				// The open note's sidecar (sidecar mode): nothing in the note
+				// moved, so there is nothing to reload here — its styles come
+				// back through `noteData.onChange`. A write of ours to it still
+				// consumes the flag it set, or the flag would swallow the next
+				// real edit to the note.
+				if (this.currentFile && file === this.plugin.noteData.sidecarOf(this.currentFile)) {
+					this.suppressNextReload = false;
+					return;
+				}
 				if (file === this.currentFile) {
 					if (this.edits.recorder.live) {
 						// A live-edit session (color-picker drag) drives rendering
@@ -2227,6 +2288,12 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			}),
 		);
 
+		// The open note's sidecar changed under the map: redraw its styles.
+		this.register(this.plugin.noteData.onChange((notePath) => {
+			if (notePath === this.currentFile?.path) void this.reloadSidecarStyles();
+			this.reloadSidecarShapes(notePath);
+		}));
+
 		// Auto-unpin if pinned file is deleted
 		this.registerEvent(
 			this.app.vault.on("delete", (file) => {
@@ -2258,6 +2325,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	async onClose(): Promise<void> {
 		this.closed = true;
+		this.sidecarShapes.clear();
 		syncNavbar(this.app, this);
 		this.releaseHistory?.();
 		this.releaseHistory = null;
@@ -2361,7 +2429,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.treeStale = false;
 		this.staleParsePaths.clear();
 		const content = await this.app.vault.read(file);
-		this.reloadFrontmatterFromContent(content);
+		this.reloadFrontmatterFromContent(content, await this.sidecarFrontmatter());
 		this.loadMapSettings();
 		this.currentTree = this.cache.get(file.path, content);
 
@@ -2531,7 +2599,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		this.suppressNextReload = true;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -2574,7 +2642,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		this.suppressNextReload = true;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -2614,7 +2682,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		this.suppressNextReload = true;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -2647,7 +2715,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		this.suppressNextReload = true;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = readStyleMapping(fm);
@@ -2684,7 +2752,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		this.suppressNextReload = true;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = readStyleMapping(fm);
@@ -2774,7 +2842,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// waiting for Obsidian's async metadata cache to refresh.
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -2852,7 +2920,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -2921,7 +2989,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -2960,7 +3028,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -3024,7 +3092,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -3084,7 +3152,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Also clear assignments in the current note's frontmatter
 		if (this.currentFile) {
 			this.suppressNextReload = true;
-			await this.processFrontMatterTracked(
+			await this.processStylesTracked(
 				this.currentFile,
 				(fm: Record<string, unknown>) => {
 					const osmosis = readStyleMapping(fm);
@@ -3137,7 +3205,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Update node references in the current note
 		if (this.currentFile) {
 			this.suppressNextReload = true;
-			await this.processFrontMatterTracked(
+			await this.processStylesTracked(
 				this.currentFile,
 				(fm: Record<string, unknown>) => {
 					const osmosis = readStyleMapping(fm);
@@ -3211,7 +3279,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = readStyleMapping(fm);
@@ -3281,34 +3349,69 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.mapSettings = { ...DEFAULT_MAP_SETTINGS, ...overrides };
 	}
 
-	/** Parse `osmosis-styles:` frontmatter from the current file's metadata cache. */
+	/**
+	 * Parse `osmosis-styles:` frontmatter from the metadata cache: the current
+	 * file's own, or its sidecar's in sidecar mode (`NoteData.frontmatter`).
+	 */
 	loadOsmosisStyleFrontmatter(): void {
 		if (!this.currentFile) {
 			this.osmosisStyleFrontmatter = undefined;
 			return;
 		}
-		const cache = this.app.metadataCache.getFileCache(this.currentFile);
 		this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(
-			cache?.frontmatter,
+			this.plugin.noteData.frontmatter(this.currentFile),
 		);
 	}
 
-	/** Re-parse osmosis frontmatter directly from raw markdown content.
-	 *  Used after undo/redo where the metadata cache hasn't updated yet. */
-	private reloadFrontmatterFromContent(content: string): void {
-		const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-		if (!match?.[1]) {
+	/**
+	 * Re-parse osmosis frontmatter directly from raw markdown content, laying
+	 * the sidecar's (`sidecar`, from {@link sidecarFrontmatter}) over it as
+	 * `NoteData` does. Used on load and after undo/redo, where the metadata
+	 * cache can't be trusted yet.
+	 */
+	private reloadFrontmatterFromContent(content: string, sidecar?: Record<string, unknown>): void {
+		const own = moves.frontmatterOf(content);
+		if (own === undefined && sidecar === undefined) {
 			this.osmosisStyleFrontmatter = undefined;
 			return;
 		}
-		try {
-			const parsed: unknown = parseYaml(match[1]);
-			const fm = parsed as Record<string, unknown> | undefined;
-			this.reportCorruptStyles(fm);
-			this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(fm);
-		} catch {
-			this.osmosisStyleFrontmatter = undefined;
-		}
+		const fm = mergeNoteData(own, sidecar);
+		this.reportCorruptStyles(fm);
+		this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(fm);
+	}
+
+	/**
+	 * The current note's sidecar frontmatter, parsed from `content` when the
+	 * caller already holds it (an undo restoring it) or read fresh from disk.
+	 * Undefined in note mode.
+	 */
+	private async sidecarFrontmatter(content?: string): Promise<Record<string, unknown> | undefined> {
+		const sidecar = this.currentFile ? this.plugin.noteData.sidecarOf(this.currentFile) : null;
+		if (!sidecar) return undefined;
+		return moves.frontmatterOf(content ?? await this.app.vault.read(sidecar));
+	}
+
+	/**
+	 * The open note's sidecar changed (a hand edit, a sync, or our own write
+	 * once the metadata cache has it): re-read the styles from disk and redraw
+	 * when they differ from what the map shows. Our own writes have already
+	 * patched the in-memory copy, so they normally redraw nothing; nor does a
+	 * schedule flush, which leaves `osmosis-styles` alone. Skipped mid-gesture
+	 * (a picker drag, a grouped move, an open editor), which draw for themselves.
+	 */
+	private async reloadSidecarStyles(): Promise<void> {
+		const file = this.currentFile;
+		if (!file || this.edits.recorder.live || this.edits.recorder.grouping || this.editingNodeId) return;
+		const before = JSON.stringify(this.osmosisStyleFrontmatter ?? null);
+		const content = await this.app.vault.read(file);
+		const sidecar = await this.sidecarFrontmatter();
+		if (file !== this.currentFile) return;
+		this.reloadFrontmatterFromContent(content, sidecar);
+		if (JSON.stringify(this.osmosisStyleFrontmatter ?? null) === before) return;
+		this.loadMapSettings();
+		this.nodeSizeCache.clear();
+		await this.render(true);
+		for (const fn of this.historyApplyListeners) fn();
 	}
 
 	/**
@@ -7940,6 +8043,10 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	): Promise<void> {
 		const after = await this.edits.processFrontMatter(file, fn);
 
+		// A sidecar has no body the map is built from: the tree and its offsets
+		// are untouched, and its styles reload through `noteData.onChange`.
+		if (this.plugin.noteData.isSidecar(file.path)) return;
+
 		// processFrontMatter inserts or grows the frontmatter block, shifting
 		// every body offset. Rebuild currentTree from the new content so a
 		// subsequent range-based structural edit (rename, move, drag, …) does
@@ -7965,6 +8072,24 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	}
 
 	/**
+	 * A style write: {@link processFrontMatterTracked} aimed at wherever `file`
+	 * keeps its `osmosis-styles` — its own frontmatter, or its sidecar when the
+	 * note is in sidecar mode (`NoteData.targetFor`). Every map style write, and
+	 * the properties sidebar's, comes through here, so undo records the file
+	 * actually written. A sidecar write leaves the note untouched, so the
+	 * `suppressNextReload` the caller set for the note's modify is dropped
+	 * rather than left to swallow the next real one.
+	 */
+	async processStylesTracked(
+		file: TFile,
+		fn: (fm: Record<string, unknown>) => void,
+	): Promise<void> {
+		const target = await this.plugin.noteData.targetFor(file);
+		if (target !== file) this.suppressNextReload = false;
+		await this.processFrontMatterTracked(target, fn);
+	}
+
+	/**
 	 * Re-render after an undo/redo (`EditPipeline.step`) has restored its files.
 	 * Re-renders from the restored content — reloading frontmatter and clearing
 	 * the size cache so both text and style changes are reflected. Handles the
@@ -7973,27 +8098,34 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private async applySnapshot(step: Promise<RestoredFile[] | null>): Promise<void> {
 		const restored = await step;
 		if (restored === null) return;
+		if (!this.currentFile) return;
+		// In sidecar mode a style undo restores the sidecar, not the note.
+		const sidecarPath = this.plugin.noteData.sidecarOf(this.currentFile)?.path;
 		let restoredCurrent: string | null = null;
+		let restoredSidecar: string | null = null;
 		for (const file of restored) {
-			if (file.path === this.currentFile?.path) restoredCurrent = file.content;
+			if (file.path === this.currentFile.path) restoredCurrent = file.content;
+			if (file.path === sidecarPath) restoredSidecar = file.content;
 		}
 
-		if (!this.currentFile) return;
-
+		let noteContent: string;
 		if (restoredCurrent !== null) {
+			noteContent = restoredCurrent;
 			this.currentTree = this.cache.get(this.currentFile.path, restoredCurrent);
-			this.reloadFrontmatterFromContent(restoredCurrent);
+		} else {
+			// Only transcluded sources (or the sidecar) changed; re-read the
+			// parent so the re-expansion below picks them up.
+			noteContent = await this.app.vault.read(this.currentFile);
+			this.cache.invalidate(this.currentFile.path);
+			this.currentTree = this.cache.get(this.currentFile.path, noteContent);
+		}
+		if (restoredCurrent !== null || restoredSidecar !== null) {
+			this.reloadFrontmatterFromContent(noteContent, await this.sidecarFrontmatter(restoredSidecar ?? undefined));
 			// Recompute derived map settings (theme/layout/background/branch line/…)
 			// from the restored frontmatter, mirroring the load flow — otherwise a
 			// map-level style undo/redo restores the file but not the live layout.
 			this.loadMapSettings();
 			this.nodeSizeCache.clear();
-		} else {
-			// Only transcluded sources changed; re-read the parent so the
-			// re-expansion below picks them up.
-			const parentContent = await this.app.vault.read(this.currentFile);
-			this.cache.invalidate(this.currentFile.path);
-			this.currentTree = this.cache.get(this.currentFile.path, parentContent);
 		}
 
 		// Re-expand transclusions so an undo/redo that carried an embed keeps it

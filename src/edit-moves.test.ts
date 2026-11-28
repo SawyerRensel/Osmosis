@@ -45,12 +45,18 @@ function splitFrontmatter(content: string): { fm: Record<string, unknown>; body:
 	return { fm: JSON.parse(match[1]) as Record<string, unknown>, body: content.slice(match[0].length) };
 }
 
-function fake(initial: Record<string, string>): Fake {
+/** `sidecars` maps a note path to its sidecar's, for notes in sidecar mode. */
+function fake(initial: Record<string, string>, sidecars: Record<string, string> = {}): Fake {
 	const files = { ...initial };
 	const log: string[] = [];
 	const failWrite = new Set<string>();
 	const tfiles = new Map<string, TFile>();
-	for (const path of Object.keys(files)) tfiles.set(path, Object.assign(new TFile(), { path, basename: path.replace(/\.md$/, "") }));
+	const tfile = (path: string): TFile => {
+		let file = tfiles.get(path);
+		if (!file) tfiles.set(path, (file = Object.assign(new TFile(), { path, basename: path.replace(/\.md$/, "") })));
+		return file;
+	};
+	for (const path of Object.keys(files)) tfile(path);
 	const app = {
 		vault: {
 			getFileByPath: (path: string) => tfiles.get(path) ?? null,
@@ -86,6 +92,16 @@ function fake(initial: Record<string, string>): Fake {
 				flushPath: (path) => {
 					log.push(`flush ${path}`);
 					return Promise.resolve();
+				},
+			},
+			noteData: {
+				sidecarOf: (file) => {
+					const path = sidecars[file.path];
+					return path === undefined ? null : tfile(path);
+				},
+				targetFor: (file) => {
+					const path = sidecars[file.path];
+					return Promise.resolve(path === undefined ? file : tfile(path));
 				},
 			},
 			cardSync: { handleBlockMove: (from, to, ids) => log.push(`cards ${from} -> ${to}: ${[...ids].join(",")}`) },
@@ -242,6 +258,34 @@ describe("migrateBlockIdentity", () => {
 		await migrateBlockIdentity(f.ctx, "Dock.md", "Harbour.md", new Set(["os-fend01"]), { "os-fend01": { due: "a" } });
 		expect(f.files["Harbour.md"]).toBe('---\n{"osmosis-schedule":{"os-moor01":{"due":"b"},"os-fend01":{"due":"a"}}}\n---\n- y\n');
 		expect(f.files["Dock.md"]).toBe("- x\n");
+	});
+
+	it("carries entries from a sidecar-mode origin to a sidecar-mode destination, leaving both notes alone", async () => {
+		const f = fake({
+			"Dock.md": "- x\n",
+			"Harbour.md": "- y\n",
+			"S/dock.osmosis.md": '---\n{"osmosis-note":"[[Dock]]","osmosis-schedule":{"os-fend01":{"due":"a"},"os-keep01":{"due":"k"}}}\n---\n',
+			"S/harbour.osmosis.md": '---\n{"osmosis-note":"[[Harbour]]"}\n---\n',
+		}, { "Dock.md": "S/dock.osmosis.md", "Harbour.md": "S/harbour.osmosis.md" });
+		const entries = await readMovedScheduleEntries(f.ctx, "Dock.md", new Set(["os-fend01"]));
+		expect(entries).toEqual({ "os-fend01": { due: "a" } });
+		await migrateBlockIdentity(f.ctx, "Dock.md", "Harbour.md", new Set(["os-fend01"]), entries);
+		expect(f.files["S/harbour.osmosis.md"]).toBe('---\n{"osmosis-note":"[[Harbour]]","osmosis-schedule":{"os-fend01":{"due":"a"}}}\n---\n');
+		expect(f.files["S/dock.osmosis.md"]).toBe('---\n{"osmosis-note":"[[Dock]]","osmosis-schedule":{"os-keep01":{"due":"k"}}}\n---\n');
+		expect(f.files["Dock.md"]).toBe("- x\n");
+		expect(f.files["Harbour.md"]).toBe("- y\n");
+	});
+
+	it("moves entries from an in-note origin into a sidecar-mode destination", async () => {
+		const f = fake({
+			"Dock.md": '---\n{"osmosis-schedule":{"os-fend01":{"due":"a"}}}\n---\n- x\n',
+			"Harbour.md": "- y\n",
+			"S/harbour.osmosis.md": '---\n{"osmosis-note":"[[Harbour]]"}\n---\n',
+		}, { "Harbour.md": "S/harbour.osmosis.md" });
+		await migrateBlockIdentity(f.ctx, "Dock.md", "Harbour.md", new Set(["os-fend01"]), { "os-fend01": { due: "a" } });
+		expect(f.files["S/harbour.osmosis.md"]).toBe('---\n{"osmosis-note":"[[Harbour]]","osmosis-schedule":{"os-fend01":{"due":"a"}}}\n---\n');
+		expect(f.files["Dock.md"]).toBe("- x\n");
+		expect(f.files["Harbour.md"]).toBe("- y\n");
 	});
 
 	it("does nothing within one note", async () => {
