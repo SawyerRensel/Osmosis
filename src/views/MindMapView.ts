@@ -117,7 +117,7 @@ import type { Card, CardOcclusion, OcclusionSet } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
 import { StudyProgressStrip } from "./StudyProgressStrip";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
-import { readingToggle } from "../view-header";
+import { STYLE_ACTION, readingToggle } from "../view-header";
 import { overlayMasks, removeMaskOverlays, renderOcclusion } from "./OcclusionRenderer";
 import { resolveDefaultReadingMode } from "../reading-mode";
 import type { FSRSRating } from "../database/FSRSScheduler";
@@ -726,12 +726,11 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		}, 0);
 	}
 
-	/** The ⋯ menu: Find, Replace, Style, Pin and Peek (`PANE_MENU`), ahead of Obsidian's own entries. */
+	/** The ⋯ menu: Find, Replace, Pin and Peek (`PANE_MENU`), ahead of Obsidian's own entries. */
 	onPaneMenu(menu: Menu, source: string): void {
 		addPaneMenuItems(menu, "2d", {
 			find: { onClick: () => this.openFind("query") },
 			replace: { onClick: () => this.openFind("replace") },
-			style: { onClick: () => void this.plugin.activatePropertiesSidebar() },
 			pin: { onClick: () => this.togglePin(), checked: this.isPinned },
 			peek: { onClick: () => this.toggleMindmapPeek(), checked: this.mindmapStudyMode === "peek", icon: peekIcon() },
 		});
@@ -2166,7 +2165,9 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			dom: this.nodesGroup?.querySelectorAll(".osmosis-node-group").length ?? 0,
 		}));
 
-		// The header's buttons are shared with Cosmos (`view-header.ts`); `arrangeViewHeader` puts them in order below; Style, Pin and Peek are in the ⋯ menu (`onPaneMenu`).
+		// The header's buttons are shared with Cosmos (`view-header.ts`); `arrangeViewHeader` puts them in order below; Pin and Peek are in the ⋯ menu (`onPaneMenu`).
+		// Style (paintbrush) opens the style sidebar; it stands leftmost.
+		const styleActionEl = this.addAction(STYLE_ACTION.icon, STYLE_ACTION.label, () => void this.plugin.activatePropertiesSidebar());
 		// Reading/editing mode toggle (icon shows the mode you'd switch to)
 		this.readingActionEl = this.addAction("book-open", "Current view: editing\nClick to read", () => {
 			this.toggleReadingMode();
@@ -2190,6 +2191,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.mindmapStudyActionEl.addClass("osmosis-study-cap");
 
 		arrangeViewHeader(this, "2d", {
+			style: styleActionEl,
 			"note-view": noteViewActionEl,
 			reading: this.readingActionEl,
 			study: this.mindmapStudyActionEl,

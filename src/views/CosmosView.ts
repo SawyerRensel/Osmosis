@@ -37,7 +37,7 @@ import { selectAfterDelete } from "../select-after-delete";
 import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../cosmos/liftoff";
 import { opensFitted } from "../cosmos/fit";
 import { readMapState, writeMapState } from "../mindmap-state";
-import { readingToggle } from "../view-header";
+import { STYLE_ACTION, readingToggle } from "../view-header";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
 import { COSMOS_HIDDEN_BUTTONS, ToolRibbon, barToggles, syncNavbar, type BarToggle, type ButtonDef, type NavbarHost, type ToolbarActions, type ToolbarState } from "./ToolRibbon";
 import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, soleNotePath, visibleModel, type ColorContext, type CosmosOverlays } from "../cosmos/overlays";
@@ -358,12 +358,11 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		}, 0);
 	}
 
-	/** The ⋯ menu: Find, Replace, Style, Follow, the joysticks (touch only, like the toolbar's 🎮) and Controls help (`PANE_MENU`), ahead of Obsidian's own entries. The style sidebar holds this graph's Settings and styles its selected lines, as it does for the mind map. */
+	/** The ⋯ menu: Find, Replace, Follow, the joysticks (touch only, like the toolbar's 🎮) and Controls help (`PANE_MENU`), ahead of Obsidian's own entries. The style sidebar holds this graph's Settings and styles its selected lines, as it does for the mind map. */
 	onPaneMenu(menu: Menu, source: string): void {
 		addPaneMenuItems(menu, "3d", {
 			find: { onClick: () => this.openFind("query") },
 			replace: { onClick: () => this.openFind("replace") },
-			style: { onClick: () => void this.plugin().activatePropertiesSidebar() },
 			follow: { onClick: () => this.toggleFollow(), checked: this.follow },
 			...(hasTouch() ? { sticks: { onClick: () => this.toggleSticks(), checked: this.sticksShown } } : {}),
 			help: { onClick: () => this.help?.toggle(true) },
@@ -437,12 +436,14 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		root.addClass("osmosis-cosmos");
 
 		// The header's buttons are shared with the mind map (`view-header.ts`); `arrangeViewHeader` puts them in order.
+		const styleActionEl = this.addAction(STYLE_ACTION.icon, STYLE_ACTION.label, () => void this.plugin().activatePropertiesSidebar());
 		const noteViewActionEl = this.addAction("file-text", "Note view", () => void this.switchToNote());
 		this.editActionEl = this.addAction("pencil", "", () => this.toggleEditMode());
 		this.showEditAction();
 		this.studyActionEl = this.addAction("graduation-cap", "Cosmos study", () => this.toggleStudy());
 		this.studyActionEl.addClass("osmosis-study-cap");
 		arrangeViewHeader(this, "3d", {
+			style: styleActionEl,
 			"note-view": noteViewActionEl,
 			reading: this.editActionEl,
 			study: this.studyActionEl,

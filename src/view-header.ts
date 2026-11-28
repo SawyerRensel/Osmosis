@@ -8,10 +8,13 @@
 export type HeaderView = "2d" | "3d";
 
 /** A header button. `switch` is the 2D | 3D pill; the rest are icon buttons. */
-export type HeaderItem = "note-view" | "switch" | "study" | "reading";
+export type HeaderItem = "style" | "note-view" | "switch" | "study" | "reading";
 
 /** Both views show exactly these, in order, left to right; Obsidian's own ⋯ stands after them. */
-export const SHARED_HEADER: readonly HeaderItem[] = ["note-view", "switch", "study", "reading"];
+export const SHARED_HEADER: readonly HeaderItem[] = ["style", "note-view", "switch", "study", "reading"];
+
+/** The Style button, leftmost: it opens the style sidebar. The same icon and label in both views. */
+export const STYLE_ACTION = { icon: "paintbrush", label: "Style" } as const;
 
 /** A view's whole header, left to right. The same in both views: what only one view has lives in the ⋯ menu (`PANE_MENU`). */
 export function headerItems(_view: HeaderView): HeaderItem[] {
@@ -19,7 +22,7 @@ export function headerItems(_view: HeaderView): HeaderItem[] {
 }
 
 /** An entry of the ⋯ pane menu. A toggle shows its state as a check mark. */
-export type PaneMenuId = "find" | "replace" | "style" | "pin" | "peek" | "follow" | "sticks" | "help";
+export type PaneMenuId = "find" | "replace" | "pin" | "peek" | "follow" | "sticks" | "help";
 export interface PaneMenuEntry {
 	id: PaneMenuId;
 	title: string;
@@ -44,14 +47,12 @@ export const PANE_MENU: Record<HeaderView, readonly PaneMenuEntry[]> = {
 	"2d": [
 		FIND,
 		REPLACE,
-		{ id: "style", title: "Style", icon: "paintbrush", toggle: false, group: 1 },
 		{ id: "pin", title: "Pin this mind map", icon: "pin", toggle: true, group: 1 },
 		{ id: "peek", title: "Peek mode", icon: "eye", toggle: true, group: 1 },
 	],
 	"3d": [
 		FIND,
 		REPLACE,
-		{ id: "style", title: "Style", icon: "paintbrush", toggle: false, group: 1 },
 		{ id: "follow", title: "Follow active note", icon: "locate-fixed", toggle: true, group: 1 },
 		{ id: "sticks", title: "Walk and fly joysticks", icon: "gamepad-2", toggle: true, group: 1 },
 		{ id: "help", title: "Controls help", icon: "help", toggle: false, group: 1 },
