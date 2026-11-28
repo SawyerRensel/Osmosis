@@ -8,7 +8,7 @@ import type OsmosisPlugin from "../main";
 import type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import type { LayoutDirection } from "../layout";
-import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter, ThemeDefinition, MapLayout, BalanceMode, LayoutSide } from "../styles";
+import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter, ThemeDefinition, BalanceMode, LayoutSide } from "../styles";
 import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle, getClassScope, mergeNodeStyle, buildMapSettingsFromFrontmatter, styleMappingFor, readStyleMapping } from "../styles";
 import { getTheme, getThemeNames, isPresetTheme } from "../themes";
 import { SHAPE_LABELS } from "../shapes";
@@ -16,6 +16,8 @@ import { PickrColorPicker } from "./PickrColorPicker";
 import { extractThemeColors } from "../color-palette";
 import { FontPicker } from "./FontPicker";
 import { sidebarSetting } from "./sidebar-setting";
+import { renderLayoutSection } from "./layout-section";
+import { engineFor, type NoteLayout } from "../note-layout";
 import { bindSlider, type ShowSliderValue } from "../slider-sync";
 
 export const VIEW_TYPE_PROPERTIES = "osmosis-properties";
@@ -138,7 +140,8 @@ export class PropertiesSidebarView extends ItemView {
 	private mapCollapseSlider: ShowSliderValue | null = null;
 	private mapHSpacingSlider: ShowSliderValue | null = null;
 	private mapVSpacingSlider: ShowSliderValue | null = null;
-	private mapLayoutDropdown: HTMLSelectElement | null = null;
+	/** Shows a layout changed elsewhere in the Map tab's Layout section (`renderLayoutSection`). */
+	private showNoteLayout: ((layout: NoteLayout) => void) | null = null;
 	private mapBalanceDropdown: HTMLSelectElement | null = null;
 	private mapSideDropdown: HTMLSelectElement | null = null;
 	private mapSideSetting: HTMLElement | null = null;
@@ -708,7 +711,17 @@ export class PropertiesSidebarView extends ItemView {
 
 		// ─── Layout Section ──────────────────────────────────────
 		this.renderMapStyleSection(container, "Layout", (body) => {
-			this.renderLayoutSection(body, settings);
+			const path = this.currentFilePath;
+			if (path === null) return;
+			this.showNoteLayout = renderLayoutSection(
+				body,
+				{ path, layout: this.plugin.noteLayoutOf(path), setLayout: (layout) => void this.plugin.setNoteLayout(path, layout) },
+				(el, layout) => {
+					// Organic and Planets swap this leaf to Cosmos, whose sidebar has their spacing controls.
+					if (engineFor(layout) === "mindmap") this.renderMindmapLayoutControls(el, this.getEffectiveSettings());
+					else el.createDiv({ cls: "setting-item-description", text: "Drawn in Cosmos, which has this layout's spacing settings." });
+				},
+			);
 		});
 
 		// ─── Global Style Sections ──────────────────────────────
@@ -1811,20 +1824,8 @@ export class PropertiesSidebarView extends ItemView {
 		return { base, theme };
 	}
 
-	private renderLayoutSection(body: HTMLElement, settings: MapSettings): void {
-		// Map layout
-		sidebarSetting(body)
-			.setName("Map layout")
-			.addDropdown((dropdown) => {
-				this.mapLayoutDropdown = dropdown.selectEl;
-				dropdown
-					.addOption("classic", "Classic")
-					.setValue(settings.mapLayout ?? "classic")
-					.onChange(async (value) => {
-						await this.saveSetting("mapLayout", value as MapLayout);
-					});
-			});
-
+	/** The Layout section's controls for a Mindmap note (`renderLayoutSection`): per note, as before. */
+	private renderMindmapLayoutControls(body: HTMLElement, settings: MapSettings): void {
 		// Direction
 		sidebarSetting(body)
 			.setName("Direction")
@@ -2356,9 +2357,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.mapBranchThicknessSlider?.(settings.branchLineThickness ?? theme?.branchLine?.thickness ?? 2);
 
 		// Layout controls
-		if (this.mapLayoutDropdown) {
-			this.mapLayoutDropdown.value = settings.mapLayout ?? "classic";
-		}
+		if (this.currentFilePath !== null) this.showNoteLayout?.(this.plugin.noteLayoutOf(this.currentFilePath));
 		if (this.mapDirectionDropdown) {
 			this.mapDirectionDropdown.value = settings.direction;
 		}

@@ -75,3 +75,9 @@ export function writeNoteLayout(frontmatter: Record<string, unknown>, layout: No
 	}
 	styleMappingFor(frontmatter)[LAYOUT_KEY] = layout;
 }
+
+/** A note's name as the sidebar shows it: the file name without its folder or `.md`. */
+export function noteTitle(path: string): string {
+	const name = path.slice(path.lastIndexOf("/") + 1);
+	return name.endsWith(".md") ? name.slice(0, -".md".length) : name;
+}

@@ -551,6 +551,7 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 				if (oldPath === this.focusPath) {
 					this.focusPath = file.path;
 					this.updateHeader();
+					this.notifySettings();
 				}
 				if (this.horizon?.hops.has(oldPath) === true) this.scheduleReload();
 			}),
@@ -2013,7 +2014,8 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		return {
 			overlays: () => this.plugin().settings.graph3dOverlays,
 			setOverlays: (overlays) => this.plugin().setCosmosOverlays(overlays),
-			// The focus note's Layout: a stopgap here until the style sidebar has its own picker (T139).
+			// The shared Layout section (`renderLayoutSection`) shows and writes the focus note's Layout.
+			layoutNote: () => this.focusPath,
 			layout: () => this.focusLayout() ?? this.plugin().settings.defaultLayout,
 			setLayout: (layout) => {
 				if (this.focusPath !== null) void this.plugin().setNoteLayout(this.focusPath, layout);
@@ -2587,6 +2589,8 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.focusPath = path;
 		this.faceFocus = true;
 		this.updateHeader();
+		// The sidebar's Layout section names and writes the focus note.
+		this.notifySettings();
 		this.app.workspace.requestSaveLayout();
 		return this.reload(flyToFocus, subpath, landOn);
 	}

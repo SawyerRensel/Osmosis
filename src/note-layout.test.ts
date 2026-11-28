@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cosmosLayout, engineFor, isNoteLayout, noteLayout, writeNoteLayout } from "./note-layout";
+import { cosmosLayout, engineFor, isNoteLayout, noteLayout, noteTitle, writeNoteLayout } from "./note-layout";
 
 describe("noteLayout", () => {
 	it("reads the note's own layout from its styles", () => {
@@ -62,5 +62,17 @@ describe("writeNoteLayout", () => {
 		const none: Record<string, unknown> = { tags: ["cooking"] };
 		writeNoteLayout(none, "mindmap", "mindmap");
 		expect(none).toEqual({ tags: ["cooking"] });
+	});
+});
+
+describe("noteTitle", () => {
+	it("drops the folder and the .md extension", () => {
+		expect(noteTitle("Travel/Lisbon trip.md")).toBe("Lisbon trip");
+		expect(noteTitle("Sailing knots.md")).toBe("Sailing knots");
+	});
+
+	it("keeps a name without .md whole", () => {
+		expect(noteTitle("Recipes/Bread.canvas")).toBe("Bread.canvas");
+		expect(noteTitle("v1.2 notes")).toBe("v1.2 notes");
 	});
 });
