@@ -2913,8 +2913,8 @@ export class CosmosScene {
 		const shown = this.container.isShown();
 		if (shown === this.paused) {
 			this.paused = !shown;
-			if (shown) this.graph.resumeAnimation();
-			else {
+			// Shown again: `renderNow` at the end of this tick resumes the engine.
+			if (!shown) {
 				this.graph.pauseAnimation();
 				this.near.pauseMedia();
 			}
@@ -2947,7 +2947,9 @@ export class CosmosScene {
 		this.stepFades(now);
 		// A re-laid-out planet's plates ease to their new places.
 		if (this.world.placeAll((id) => this.live.get(id), performance.now())) this.dirty = true;
+		const nearStart = performance.now();
 		this.near.update(this.nodes, this.graph.camera() as PerspectiveCamera, focus.value, this.fog.density, seconds);
+		const writeStart = performance.now();
 		this.ribbons.setViewportHeight(this.graph.renderer().domElement.height);
 		if (this.dirty) {
 			this.dirty = false;
@@ -2960,6 +2962,7 @@ export class CosmosScene {
 			this.writeShells();
 			this.boundaries.invalidate();
 		}
+		const writeMs = performance.now() - writeStart;
 		this.boundaries.update(this.nodes, this.hierarchyEnds(), (node) => this.surfaceOf(node as EngineNode), now);
 		this.updateHints(seconds);
 		if (this.overlays.particles) this.writeParticles(now);
@@ -2969,8 +2972,27 @@ export class CosmosScene {
 			this.graph.renderer().domElement.style.cursor = node === null ? "" : "pointer";
 			this.hover = null;
 		}
-		this.perf.frame(now, performance.now() - tickStart);
+		const tickMs = performance.now() - tickStart;
+		this.renderNow();
+		this.perf.frame(now, tickMs, writeStart - nearStart, writeMs);
 	};
+
+	/**
+	 * Run the engine's frame (its simulation step, the WebGL render and the
+	 * panels' CSS2D/CSS3D renders) now, after this frame's updates, and in
+	 * place of its own animation frame (T141). The engine's loop otherwise runs
+	 * first each frame: the panel renders write ~5 styles a panel, and the
+	 * `isShown()` (`offsetParent`) at the top of `tick` then forced a
+	 * synchronous style recalc and layout over them, which the browser redid
+	 * at the end of the frame for `tick`'s own writes. Now every layout read
+	 * comes before the frame's writes. Pausing cancels the engine's pending
+	 * frame; resuming runs one cycle at once and books the next, which the
+	 * next `tick` cancels again, so the engine still runs once a frame.
+	 */
+	private renderNow(): void {
+		this.graph.pauseAnimation();
+		this.graph.resumeAnimation();
+	}
 
 	/** Advance every fade; once the nodes that left have faded out, drop them from the graph. */
 	private stepFades(now: number): void {
@@ -3021,9 +3043,9 @@ export class CosmosScene {
 		const focus = this.plates.focus.value;
 		const density = this.fog.density;
 		const point = this.hintPoint;
-		const canvas = this.graph.renderer().domElement;
-		const halfWidth = canvas.clientWidth / 2;
-		const halfHeight = canvas.clientHeight / 2;
+		// The stage's size as the engine was told it (`resize`): the canvas's client size, read without a layout.
+		const halfWidth = this.graph.width() / 2;
+		const halfHeight = this.graph.height() / 2;
 		// Screen px per world unit at view depth 1.
 		const unitPx = halfHeight * camera.projectionMatrix.elements[5];
 		const probes: HintProbe[] = [];

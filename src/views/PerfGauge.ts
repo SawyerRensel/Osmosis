@@ -29,7 +29,7 @@ export class PerfGauge {
 	 * `onToggle` runs after each show or hide, to start or stop the owner's own recording.
 	 * `isolate` keeps pointer and wheel events on the gauge from reaching the view under it (the 2D map pans on them).
 	 */
-	constructor(private container: HTMLElement, private readonly onToggle: (shown: boolean) => void, onReadoutClick?: () => void, isolate = false) {
+	constructor(private container: HTMLElement, private readonly onToggle: (shown: boolean) => void, onReadoutClick?: (e: MouseEvent) => void, isolate = false) {
 		this.corner = container.createDiv({ cls: "osmosis-perf" });
 		if (isolate) {
 			for (const type of ["pointerdown", "pointerup", "mousedown", "click", "dblclick", "contextmenu", "wheel", "touchstart"]) {

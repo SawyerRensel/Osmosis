@@ -197,11 +197,19 @@ export interface NearStats {
 	rasters: number;
 	/** Mask writes that were not skipped as unchanged. */
 	masks: number;
+	/** Gradient layers in those masks (≈ 1 + 6 a rounded hole + 1 an edge stroke): each is a gradient image the browser repaints. */
+	maskLayers: number;
 }
 
 export class CosmosNear {
 	/** Set by the perf readout while it is shown; null (nothing recorded) otherwise. */
 	stats: NearStats | null = null;
+	/**
+	 * Perf readout A/B (Shift+click the readout): no plate or edge holes are
+	 * cut, so the frame's cost with and without masks can be read off. Off by
+	 * default; the panels then cover nearer plates.
+	 */
+	masksOff = false;
 	/** Handed to 3d-force-graph as an extra renderer: it lays the panels over the canvas every frame. */
 	readonly renderer = new CSS2DRenderer();
 	/** The same for Planets mode's tilted panels, which lie on their plates in 3D. */
@@ -925,11 +933,15 @@ export class CosmosNear {
 	/** Mask `holes` and `strokes` (lens px, drawn at `scale`) out of the panel, writing only when one moved by about a step on screen. */
 	private cutHoles(panel: Panel, holes: readonly PanelHole[], scale: number, strokes: readonly PanelStroke[]): void {
 		const step = MASK_STEP_PX / scale;
-		const mask = holeMask(snapHoles(holes, step), snapStrokes(strokes, step));
+		const off = this.masksOff;
+		const mask = off ? null : holeMask(snapHoles(holes, step), snapStrokes(strokes, step));
 		const key = mask === null ? "" : `${mask.image}|${mask.size}|${mask.position}`;
 		if (key === panel.mask) return;
 		panel.mask = key;
-		if (this.stats !== null) this.stats.masks++;
+		if (this.stats !== null) {
+			this.stats.masks++;
+			if (mask !== null) this.stats.maskLayers += 1 + 6 * holes.length + strokes.length;
+		}
 		panel.lens.setCssStyles({ maskImage: mask?.image ?? "", maskSize: mask?.size ?? "", maskPosition: mask?.position ?? "", maskComposite: mask?.composite ?? "" });
 	}
 
