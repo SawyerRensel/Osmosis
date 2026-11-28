@@ -9,14 +9,14 @@ context:
 people:
 location:
 related:
-status: To-Do
+status: In-Review
 batch: 18
 priority:
 progress:
 date_created: 2026-11-28T03:39:06.000Z
 date_modified: 2026-11-28T03:39:06.000Z
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: 2026-11-28T03:30:00.000Z
+date_start_actual: 2026-11-28T03:30:00.000Z
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -66,3 +66,29 @@ Sidecar files hold a note's styles as well as its schedules, so the default fold
 2. Settings → Files and links → Excluded files lists `Osmosis/Data` and not `Osmosis/Schedule`.
 3. Open a note with sidecar styles (for example one in `vault/tests/graph3d/`) in the mind map: its styles still apply.
 4. Set the folder to `Sidecars`, reload: nothing moves back.
+
+## Batch implementation notes (awaiting manual test)
+
+**Approach.** `DEFAULT_SETTINGS.sidecarFolder` now reads `DEFAULT_SIDECAR_FOLDER` (`Osmosis/Data`, exported from `src/store/sidecar.ts`). The pure decision `migratedSidecarFolder(saved)` returns `Osmosis/Data` only for the exact string `Osmosis/Schedule`, else null. `main.ts` `migrateSidecarFolderDefault()` runs it in the `onLayoutReady` startup callback.
+
+**Decisions**
+- **Migration runs before the startup `syncAll`, `excludeSidecarFolderOnce` and `migrateMapSettingsToFrontmatter`.** Those are now chained after it. Otherwise the scan could stamp fence ids and create sidecars into the folder being vacated while the move is under way. `migrateSidecarFolderDefault` never rejects (try/catch + console.error), so the chain always reaches `syncAll` and `resolveCardStoreReady`.
+- **Folder present on disk goes through `changeSidecarFolder`** (moves files, rebuilds index, swaps the Excluded entry, Notice). **No folder on disk** only updates the setting and saves, so a fresh-but-saved vault gets no stray Excluded entry and no Notice, and `excludeSidecarFolderOnce` still excludes the folder when it is first created.
+- **Fresh vault:** no saved value gives `Osmosis/Data` from the defaults, and `migratedSidecarFolder` returns null, so it never migrates.
+- **Cost accepted:** `changeSidecarFolder` ends in `saveSettings`, which fires its own `syncAll`. On a migrating load that is a second full scan, once.
+- **An old build wrote the default into data.json for every vault**, so a deliberate `Osmosis/Schedule` choice looks identical and is moved too. That follows the intake rule (exact match).
+- Prose in the sidecar fixtures (`e2e/fixtures/sidecar/**` and the `vault/tests/sidecar/**` copies) that mentioned `Osmosis/Schedule/` now says `Osmosis/Data/`. Only text changed. The `schedule-folder` directories inside the fixtures are unchanged.
+
+| File | Change |
+|---|---|
+| `src/store/sidecar.ts` | `DEFAULT_SIDECAR_FOLDER`, `migratedSidecarFolder` |
+| `src/settings.ts` | default uses the constant |
+| `src/main.ts` | `migrateSidecarFolderDefault`; startup chain reordered |
+| `src/store/sidecar.test.ts` | `migratedSidecarFolder` tests; folder strings renamed |
+| `src/store/NoteData.test.ts`, `src/convert-branch.test.ts`, `src/browse/mutate.test.ts`, `src/cosmos/horizon.test.ts` | folder strings renamed |
+| `docs/reference/settings.md`, `docs/reference/data-storage.md` | new default |
+| `e2e/fixtures/sidecar/**`, `vault/tests/sidecar/**` | prose path renamed |
+
+**Fixture.** None new; `vault/Osmosis/Schedule` (dev data, untracked) is the test subject. `vault/tests/graph3d/` for the styles check.
+
+**Not verified.** Nothing in Obsidian: the migration itself (file move, Excluded swap, Notice) is untested end to end. Unit tests cover only the decision and the renamed paths. Lint: 0 errors (2 pre-existing warnings). Vitest 3792 pass. Build OK.
