@@ -10,14 +10,14 @@ people:
 location:
 related:
   - "[[Map views - Layout per note replaces 2D-3D]]"
-status: To-Do
+status: In-Review
 batch: 18
 priority:
 progress:
 date_created: 2026-11-28T03:39:06.000Z
 date_modified: 2026-11-28T03:39:06.000Z
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: 2026-11-28T03:40:00.000Z
+date_start_actual: 2026-11-28T03:40:00.000Z
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -65,3 +65,25 @@ pull_request:
 ## Test plan
 1. Open any note in the mind map: the paintbrush is leftmost, left of Note view. Click it: the style sidebar opens. The ⋯ menu has no Style.
 2. Switch to Cosmos: the same.
+
+## Batch implementation notes (awaiting manual test)
+
+**Approach.** `HeaderItem` gained `"style"`, placed first in `SHARED_HEADER`; both views make the button with `addAction(STYLE_ACTION.icon, STYLE_ACTION.label, ...)` and pass it to `arrangeViewHeader` under the `style` key. `STYLE_ACTION` (`paintbrush`, `Style`) is exported from `view-header.ts` so both views share one icon and label. The `style` entry is gone from `PANE_MENU` (both lists) and from `PaneMenuId`; the `style:` handlers are gone from both `onPaneMenu` calls.
+
+**Header order now** (`SHARED_HEADER` in `src/view-header.ts`, applied by `arrangeViewHeader`): `style, note-view, switch (2D|3D pill), study, reading`, then Obsidian's own buttons (the ⋯). `headerItems(view)` returns that list for both views. T138 removes the pill by deleting `"switch"` from `HeaderItem` / `SHARED_HEADER`, and `createViewSwitch` and the `onSwitch` argument of `arrangeViewHeader`.
+
+**Decisions**
+- Handler stays `plugin.activatePropertiesSidebar()` as before. Cosmos reaches it through `this.plugin()`, the mind map through `this.plugin`.
+- Pin/Peek/Follow etc. stay in group 1 of the menu; with Style gone nothing else needed renumbering.
+- A stale doc comment in `arrangeViewHeader` says the pill "stands first". It was already wrong, because Note view comes first. I left it for T138, which rewrites that code anyway.
+
+| File | Change |
+|---|---|
+| `src/view-header.ts` | `"style"` in `HeaderItem` and first in `SHARED_HEADER`; `STYLE_ACTION`; Style removed from `PANE_MENU` and `PaneMenuId` |
+| `src/view-header.test.ts` | Header order, Style-leftmost, and menu lists updated; new test that Style is not in the menu |
+| `src/views/MindMapView.ts` | Style `addAction`, passed to `arrangeViewHeader`; menu handler removed |
+| `src/views/CosmosView.ts` | Same |
+
+**Fixture:** none needed. Any note opens in the mind map and Cosmos.
+
+**Not verified:** the rendered header in Obsidian (the order is unit-tested, the DOM is not). Whether the paintbrush looks right at narrow pane widths or on phones, where Obsidian may collapse header actions.
